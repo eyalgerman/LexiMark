@@ -2,7 +2,7 @@ import os
 from typing import Union
 import docx
 import fitz  # PyMuPDF
-import io
+# import io
 
 def extract_text_from_file(file: Union[str, bytes]) -> str:
     """

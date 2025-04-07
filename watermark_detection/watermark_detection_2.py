@@ -2,7 +2,6 @@ import json
 import logging
 import datetime
 import os
-
 import numpy as np
 import openai
 import pandas as pd
@@ -31,6 +30,15 @@ TOP_K_ENTROPY = 2
 
 
 def load_model(name1):
+    """
+    Loads a model and tokenizer from Hugging Face if it's not an OpenAI model.
+
+    Args:
+        name1 (str): Name or path of the model.
+
+    Returns:
+        Tuple[transformers.PreTrainedModel, transformers.PreTrainedTokenizer] or (None, None)
+    """
     if "davinci" in name1:
         model1 = None
         tokenizer1 = None
@@ -42,6 +50,16 @@ def load_model(name1):
 
 
 def load_local_model(name1):
+    """
+    Loads a local or OpenAI model along with its tokenizer.
+
+    Args:
+        name1 (str): Model name or path. If it's an OpenAI model, loads with tiktoken.
+
+    Returns:
+        Tuple[Union[str, transformers.PreTrainedModel], Union[tiktoken.Encoding, transformers.PreTrainedTokenizer]]:
+            Model and tokenizer.
+    """
     if "davinci" in name1 or "gpt" in name1:
         model1 = name1
         tokenizer1 = tiktoken.encoding_for_model("gpt-4o-mini-2024-07-18")
@@ -55,7 +73,17 @@ def load_local_model(name1):
 
 def calculate_perplexity(sentence, model, tokenizer, gpu):
     """
-    exp(loss)
+    Computes the perplexity of a sentence using a Hugging Face model.
+
+    Args:
+        sentence (str): Input sentence.
+        model (PreTrainedModel): Loaded language model.
+        tokenizer (PreTrainedTokenizer): Tokenizer corresponding to the model.
+        gpu (str): Device to run the model on (e.g., 'cuda').
+
+    Returns:
+        Tuple[float, List[float], float, torch.Tensor, torch.Tensor]:
+            Perplexity, token probabilities, loss, logits, and input ids.
     """
 
     # Check if openai model
@@ -94,18 +122,15 @@ def calculate_perplexity(sentence, model, tokenizer, gpu):
 
 def calculate_perplexity_openai(prompt, model_name="text-davinci-003"):
     """
-    Calculate perplexity using the OpenAI Completion API.
-    Note: You must use a model that supports the logprobs parameter
-    (e.g. 'text-davinci-003', 'davinci', etc.).
+    Calculates perplexity using an OpenAI model with logprobs enabled.
 
-    :param prompt: str, the text prompt
-    :param model_name: str, the model to use (default: "text-davinci-003")
-    :return: tuple
-        perplexity (float),
-        list of valid token logprobs (list),
-        mean of those logprobs (float),
-        original list of token logprobs (list),
-        tokens (list)
+    Args:
+        prompt (str): Input text prompt.
+        model_name (str): Name of the OpenAI model.
+
+    Returns:
+        Tuple[float, List[float], float, torch.Tensor, List[str]]:
+            Perplexity, valid logprobs, mean logprob, raw logit tensor, token list.
     """
     # Clean out any null characters that might cause prompt issues
     prompt = prompt.replace('\x00', '')
@@ -176,6 +201,22 @@ def calculate_perplexity_openai(prompt, model_name="text-davinci-003"):
 
 
 def inference(model1, tokenizer1, text, label, name, line_to_top_words_map, entropy_map, data_name=None):
+    """
+    Performs inference and computes watermark-related metrics for a single example.
+
+    Args:
+        model1: Model or model name.
+        tokenizer1: Tokenizer object.
+        text (str): Input text to analyze.
+        label (int): Ground truth label.
+        name (str): Identifier or filename for the text.
+        line_to_top_words_map (dict): Map from line number to top-entropy words.
+        entropy_map (dict): Precomputed entropy values for words.
+        data_name (str, optional): Optional dataset name.
+
+    Returns:
+        dict: A dictionary containing various metrics and results.
+    """
     pred = {}
     pred["FILE_PATH"] = name
     pred["label"] = label
@@ -365,6 +406,20 @@ def inference(model1, tokenizer1, text, label, name, line_to_top_words_map, entr
 
 
 def evaluate_data(test_data, model1, tokenizer1, col_name, modelname1, mode):
+    """
+    Evaluates watermark-related metrics for a dataset.
+
+    Args:
+        test_data (List[dict]): Dataset entries containing input text and labels.
+        model1: Loaded model or model name.
+        tokenizer1: Corresponding tokenizer.
+        col_name (str): Name of the column containing text.
+        modelname1 (str): Identifier for the model.
+        mode (str): Dataset type or task mode (e.g., "Texts").
+
+    Returns:
+        List[dict]: List of prediction dictionaries for each sample.
+    """
     print(f"all data size: {len(test_data)}")
     print(f"mode: {mode}")
     all_output = []
@@ -395,6 +450,14 @@ def evaluate_data(test_data, model1, tokenizer1, col_name, modelname1, mode):
 
 
 def main(args):
+    """
+    Entry point for running watermark detection from CLI args.
+
+    Loads model and dataset, computes predictions and evaluation metrics, and saves results.
+
+    Args:
+        args (argparse.Namespace): Parsed command-line arguments.
+    """
     # args.output_dir = f"{args.output_dir}/{args.target_model.rstrip('/').split('/')[-1]}_{args.target_model.rstrip('/').split('/')[-1]}/{args.key_name}"
     # Path(args.output_dir).mkdir(parents=True, exist_ok=True)
     print("Start watermark detection")
@@ -423,6 +486,18 @@ def main(args):
     eval_2.evaluate_like_min_k(file_preds, kind=kind)
 
 def main2(target_model, data, output_dir, mode="Texts"):
+    """
+    Programmatic entry point for running watermark detection and returning metrics.
+
+    Args:
+        target_model (str): Name or path of the model to evaluate.
+        data (str): Path to JSONL data or dataset name.
+        output_dir (str): Directory where results will be saved.
+        mode (str): Dataset type or mode. Defaults to "Texts".
+
+    Returns:
+        pandas.DataFrame: DataFrame containing evaluated metrics.
+    """
     print("Start watermark detection")
     print(f"Target model: {target_model}")
     print(f"Data: {data}")
@@ -449,8 +524,6 @@ def main2(target_model, data, output_dir, mode="Texts"):
     metrics_file = f"{result_folder}/metrics_{kind}.csv"
     metrics_df = pd.read_csv(metrics_file)
     return metrics_df
-
-
 
 
 if __name__ == '__main__':

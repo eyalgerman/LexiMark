@@ -19,7 +19,7 @@ def fine_tune_documents(model_name, folder_path, save_folder):
     # Write sentences to CSV
     timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     csv_file = os.path.join(folder_path, f"train_data_{timestamp}.csv")
-    procces_csv.write_sentences_to_csv(sentences, csv_file)
+    process_csv.write_sentences_to_csv(sentences, csv_file)
     # Fine-tune the model
     return QLora_Medium_Finetune_LLM.main(model_name, csv_file, save_folder)
 

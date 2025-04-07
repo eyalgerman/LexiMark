@@ -15,11 +15,12 @@ import matplotlib.pyplot as plt
 
 def plot_first_probabilities(prob_dict):
     """
-    Plot the first probabilities for each word in the given dictionary.
+    Plots a bar chart of the first probabilities for each word in the dictionary.
 
-    Parameters:
-    prob_dict (dict): A dictionary where keys are words and values are probabilities.
+    Args:
+        prob_dict (dict): A dictionary where keys are words and values are probabilities.
     """
+
     # Create lists of words and their corresponding probabilities
     words = list(prob_dict.keys())
     probabilities = list(prob_dict.values())
@@ -42,10 +43,10 @@ def plot_first_probabilities(prob_dict):
 
 def plot_first_probabilities_scatter(prob_dict):
     """
-    Plot the first probabilities for each word in the given dictionary as a scatter plot.
+    Plots a scatter chart of the first probabilities for each word in the dictionary.
 
-    Parameters:
-    prob_dict (dict): A dictionary where keys are words and values are probabilities.
+    Args:
+        prob_dict (dict): A dictionary where keys are words and values are probabilities.
     """
     # Create lists of words and their corresponding probabilities
     words = list(prob_dict.keys())
@@ -68,6 +69,18 @@ def plot_first_probabilities_scatter(prob_dict):
 
 
 def add_watermark_lower(k, mode="BookMIA", synonym_method="context", syn_threshold=0.6):
+    """
+    Returns a function to watermark text by replacing the lowest-k entropy words with higher entropy synonyms.
+
+    Args:
+        k (int): Number of low-entropy words to replace per sentence.
+        mode (str): Dataset mode, used for entropy calculation.
+        synonym_method (str): Method for synonym generation (e.g., "context", "wordnet").
+        syn_threshold (float): Threshold for contextual synonym selection.
+
+    Returns:
+        Callable: A function that accepts a list of texts and returns watermarked texts.
+    """
     def watermarked_sentences(data, output_file=None):
         new_sentences = []
         replaced_dict = {}  # Dictionary to keep track of original and replaced words
@@ -85,6 +98,19 @@ def add_watermark_lower(k, mode="BookMIA", synonym_method="context", syn_thresho
 
 
 def add_watermark_higher(k, mode="BookMIA", synonym_method="context", output_file=None, syn_threshold=0.6):
+    """
+    Returns a function to watermark text by replacing the highest-k entropy words with higher entropy synonyms.
+
+    Args:
+        k (int): Number of high-entropy words to replace per sentence.
+        mode (str): Dataset mode, used for entropy calculation.
+        synonym_method (str): Method for synonym generation.
+        output_file (str, optional): Path to save the dictionary of replacements.
+        syn_threshold (float): Threshold for synonym similarity.
+
+    Returns:
+        Callable: A function that accepts a list of texts and returns watermarked texts.
+    """
     def watermarked_sentences(data):
         new_sentences = []
         replaced_dict = {}  # Dictionary to keep track of original and replaced words
@@ -119,6 +145,19 @@ def add_watermark_higher(k, mode="BookMIA", synonym_method="context", output_fil
 
 
 def add_watermark_random(k=5, synonym_method="context", seed=None, output_file=None, syn_threshold=0.6):
+    """
+    Returns a function that replaces k random words in each sentence with higher entropy synonyms.
+
+    Args:
+        k (int): Number of words to randomly replace per sentence.
+        synonym_method (str): Method to generate synonyms.
+        seed (int, optional): Seed for random sampling.
+        output_file (str, optional): Path to save the dictionary of replacements.
+        syn_threshold (float): Threshold for synonym similarity.
+
+    Returns:
+        Callable: A function that accepts a list of texts and returns watermarked texts.
+    """
     def watermarked_sentences(data):
         new_sentences = []
         replaced_dict = {}
@@ -135,6 +174,20 @@ def add_watermark_random(k=5, synonym_method="context", seed=None, output_file=N
 
 
 def replace_lowest_top_k_entropy_with_higher_entropy(text, replaced_dict={}, entropy_map={}, k_value=5, synonym_method="context", syn_threshold=0.6):
+    """
+    Replaces the lowest entropy words in the text with higher entropy synonyms.
+
+    Args:
+        text (str): Input text to modify.
+        replaced_dict (dict): Dictionary tracking original and replaced words.
+        entropy_map (dict): Mapping from words to entropy values.
+        k_value (int): Number of lowest-entropy words to replace.
+        synonym_method (str): Synonym generation method.
+        syn_threshold (float): Similarity threshold for synonym selection.
+
+    Returns:
+        Tuple[str, dict]: The modified text and updated replacement dictionary.
+    """
     nlp_spacy = spacy.load("en_core_web_sm")
 
     # Create a mapping of lines to their top words based on entropy
@@ -171,6 +224,20 @@ def replace_lowest_top_k_entropy_with_higher_entropy(text, replaced_dict={}, ent
 
 
 def replace_higher_top_k_entropy_with_higher_entropy(text, replaced_dict={}, entropy_map={}, k_value=5, synonym_method="context", syn_threshold=0.6):
+    """
+    Replaces the highest entropy words in the text with even higher-entropy synonyms if available.
+
+    Args:
+        text (str): Input text to modify.
+        replaced_dict (dict): Dictionary tracking original and replaced words.
+        entropy_map (dict): Mapping from words to entropy values.
+        k_value (int): Number of highest-entropy words to replace.
+        synonym_method (str): Synonym generation method.
+        syn_threshold (float): Similarity threshold for synonym selection.
+
+    Returns:
+        Tuple[str, dict]: The modified text and updated replacement dictionary.
+    """
     nlp_spacy = spacy.load("en_core_web_sm")
 
     # Create a mapping of lines to their top words based on entropy
@@ -207,6 +274,20 @@ def replace_higher_top_k_entropy_with_higher_entropy(text, replaced_dict={}, ent
 
 
 def replace_random_k_words_in_each_sentence(text, k_value, replaced_dict={}, synonym_method="context", seed=None, syn_threshold=0.6):
+    """
+    Replaces k random words in each sentence with higher-entropy synonyms.
+
+    Args:
+        text (str): Text containing multiple sentences.
+        k_value (int): Number of words to replace per sentence.
+        replaced_dict (dict): Dictionary to store original and replaced word mappings.
+        synonym_method (str): Method to retrieve synonyms.
+        seed (int, optional): Random seed for reproducibility.
+        syn_threshold (float): Threshold for filtering synonyms by similarity.
+
+    Returns:
+        Tuple[str, dict]: Modified text and updated replacement dictionary.
+    """
     # Set the random seed for reproducibility
     if seed is not None:
         random.seed(seed)
