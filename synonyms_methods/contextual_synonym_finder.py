@@ -3,12 +3,7 @@ from nltk.corpus import wordnet
 import torch
 from transformers import BertTokenizer, BertModel
 
-# Load pre-trained model and tokenizer
-tokenizer = BertTokenizer.from_pretrained('bert-base-uncased')
-model = BertModel.from_pretrained('bert-base-uncased')
-# Move model to GPU if available
-device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-model.to(device)
+
 
 def get_contextual_embedding(word, sentence, tokenizer, model, device):
     """
@@ -69,6 +64,13 @@ def get_synonyms_in_context(word, sentence, threshold=0.7):
     Returns:
         Set[str]: A set of synonyms that are contextually similar based on BERT embeddings.
     """
+    # Load pre-trained model and tokenizer
+    tokenizer = BertTokenizer.from_pretrained('bert-base-uncased')
+    model = BertModel.from_pretrained('bert-base-uncased')
+    # Move model to GPU if available
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    model.to(device)
+
     synonyms = set()
     original_embedding = get_contextual_embedding(word, sentence, tokenizer, model, device)
     if original_embedding is None:
@@ -112,6 +114,12 @@ def check_synonym_word_bert(sentence, word, synonym, threshold=0.8):
     Returns:
         bool: True if the synonym is contextually similar above the threshold, False otherwise.
     """
+    # Load pre-trained model and tokenizer
+    tokenizer = BertTokenizer.from_pretrained('bert-base-uncased')
+    model = BertModel.from_pretrained('bert-base-uncased')
+    # Move model to GPU if available
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    model.to(device)
     # Embed the word and the synonym using SBERT
     original_embedding = get_contextual_embedding(word, sentence, tokenizer, model, device)
     # Create a sentence by replacing the original word with the synonym

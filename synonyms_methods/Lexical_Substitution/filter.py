@@ -4,7 +4,7 @@ from nltk.stem.wordnet import WordNetLemmatizer
 import torch
 import string
 
-from nyms import get_nyms
+from synonyms_methods.Lexical_Substitution.nyms import get_nyms
 
 '''
 WordNet is a lexical database of semantic relations between words in more than 200 languages. WordNet links words into semantic relations including synonyms, 

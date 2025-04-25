@@ -1,8 +1,8 @@
 from contextlib import redirect_stdout
 from datetime import datetime
 
-from lexsub_dropout import lexsub_dropout
-from load_models import load_data
+from synonyms_methods.Lexical_Substitution.lexsub_dropout import lexsub_dropout
+from synonyms_methods.Lexical_Substitution.load_models import load_data
 
 data = load_data()
 

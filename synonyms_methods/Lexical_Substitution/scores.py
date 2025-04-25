@@ -1,7 +1,7 @@
 
 import torch
 import numpy as np
-from load_models import load_transformers
+from synonyms_methods.Lexical_Substitution.load_models import load_transformers
 
 '''
 Scores implemented per formulas as described in Zhou et al. (2019): https://aclanthology.org/P19-1328/

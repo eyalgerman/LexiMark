@@ -3,9 +3,9 @@ import logging
 import datetime
 import os
 import numpy as np
-import openai
+# import openai
 import pandas as pd
-from openai import OpenAI
+# from openai import OpenAI
 import tiktoken
 from tqdm import tqdm
 
@@ -132,6 +132,8 @@ def calculate_perplexity_openai(prompt, model_name="text-davinci-003"):
         Tuple[float, List[float], float, torch.Tensor, List[str]]:
             Perplexity, valid logprobs, mean logprob, raw logit tensor, token list.
     """
+    print("Not working...")
+    return None, None, None, None, None
     # Clean out any null characters that might cause prompt issues
     prompt = prompt.replace('\x00', '')
 
@@ -505,12 +507,15 @@ def main2(target_model, data, output_dir, mode="Texts"):
     model1, tokenizer1 = load_local_model(target_model)
     if "jsonl" in data:
         data = eval_2.load_jsonl(f"{data}")
+    elif isinstance(data, list):
+        data = data
     else:  # load data from huggingface
         dataset = process_data.load_data(mode=mode)
         data = eval_2.convert_huggingface_data_to_list_dic(dataset)
         data = data[0]
     all_output = evaluate_data(data, model1, tokenizer1, "input", target_model, mode)
-    dataset = data.rstrip('/').split('/')[-1].split('.')[0]
+    # dataset = data.rstrip('/').split('/')[-1].split('.')[0]
+    dataset = "results"
     model = target_model.rstrip('/').split('/')[-1]
     current_time = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     kind = f"E=MIA_detection"
@@ -523,7 +528,8 @@ def main2(target_model, data, output_dir, mode="Texts"):
     eval_2.evaluate_like_min_k(file_preds, kind=kind)
     metrics_file = f"{result_folder}/metrics_{kind}.csv"
     metrics_df = pd.read_csv(metrics_file)
-    return metrics_df
+    preds_df = pd.read_csv(file_preds)
+    return metrics_df, preds_df
 
 
 if __name__ == '__main__':

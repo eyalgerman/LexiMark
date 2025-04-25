@@ -10,10 +10,10 @@ import time
 import numpy as np
 from nltk.stem.wordnet import WordNetLemmatizer
 
-from nyms import get_nyms
-from filter import filter_words
-from scores import calc_scores
-from load_models import load_transformers
+from synonyms_methods.Lexical_Substitution.nyms import get_nyms
+from synonyms_methods.Lexical_Substitution.filter import filter_words
+from synonyms_methods.Lexical_Substitution.scores import calc_scores
+from synonyms_methods.Lexical_Substitution.load_models import load_transformers
 
 tokenizer, lm_model, raw_model = load_transformers()
 

@@ -14,7 +14,18 @@ from watermarks.watermark_based_k import replace_higher_top_k_entropy_with_highe
 ### Tag & Tab ###
 
 def fine_tune_documents(model_name, folder_path, save_folder):
-    texts = file_processing.extract_texts_from_folder(folder_path)
+    """
+    Fine-tunes a model on text extracted from a folder using QLoRA.
+
+    Args:
+        model_name (str): Path or name of the base model to fine-tune.
+        folder_path (str): Path to the folder containing text files.
+        save_folder (str): Directory where the fine-tuned model will be saved.
+
+    Returns:
+        str: Path to the fine-tuned model directory.
+    """
+    texts = file_processing.extract_texts_from_folder(folder_path).values()
     sentences = process_data.split_texts_into_sentences(texts)
     # Write sentences to CSV
     timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
@@ -27,36 +38,42 @@ def fine_tune_documents(model_name, folder_path, save_folder):
 
 def run_tag_and_tab(model_name, folder_path, output_folder):
     """
-    Run the Tag & Tab watermark detection method.
+    Executes the Tag & Tab watermark detection method and computes average entropy score.
+
     Args:
-        model_name:
-        folder_path:
-        output_folder:
+        model_name (str): Path or name of the target model.
+        folder_path (str): Folder containing input files for evaluation.
+        output_folder (str): Directory to store detection results.
 
     Returns:
+        float: Mean sentence entropy score for `k=4`.
     """
-    metrics_df = watermark_detection.watermark_detection_2.main2(model_name, folder_path, output_folder)
-    return metrics_df
-
+    texts = file_processing.extract_texts_from_folder(folder_path).values()
+    sentences = process_data.split_texts_into_sentences(texts)
+    records = []
+    for sentence in sentences:
+        records.append({"input": sentence, "label": 0})
+    metrics_df, preds_df = watermark_detection.watermark_detection_2.main2(model_name, records, output_folder)
+    return preds_df["sentence_entropy_log_likelihood_k=4"].mean()
 
 
 ### LexiMark ###
 
 def identify_high_entropy_words(text: str, top_k: int = 5):
     """
-    Identifies the top-k high-entropy words in the given text.
+    Identifies the top-k high-entropy words in the text based on entropy scores.
 
     Args:
         text (str): The input text to analyze.
-        top_k (int): Number of high-entropy words to return.
+        top_k (int): Number of high-entropy words to return per sentence.
 
     Returns:
-        List[str]: A list of high-entropy words from the text.
+        List[str]: Unique high-entropy words across all sentences.
     """
     nlp_spacy = spacy.load("en_core_web_sm")
     # Create a mapping of lines to their top words based on entropy
     doc = nlp_spacy(text)
-    entropy_map = create_entropy_map(text, mode="Text") # TODO: add Text mode
+    entropy_map = create_entropy_map(text, mode="Text")
     sentences = [sent.text for sent in doc.sents]
     all_bottom_k_words = {}
     for sentence in sentences:
@@ -71,6 +88,18 @@ def identify_high_entropy_words(text: str, top_k: int = 5):
 
 
 def recommend_synonyms(text, synonym_method, syn_threshold, k) -> List[str]:
+    """
+    Replaces top-k high-entropy words with higher-entropy synonyms.
+
+    Args:
+        text (str): Input text to modify.
+        synonym_method (str): Method to generate synonyms (e.g., 'context', 'sbert').
+        syn_threshold (float): Threshold for synonym contextual similarity.
+        k (int): Number of high-entropy words to replace.
+
+    Returns:
+        Dict[str, str]: Dictionary of original words and their replacements.
+    """
     entropy_map = create_entropy_map(text, mode="Text")
     replaced_dict = {}
     new_text, replaced_dict = replace_higher_top_k_entropy_with_higher_entropy(text, replaced_dict=replaced_dict,
@@ -81,6 +110,47 @@ def recommend_synonyms(text, synonym_method, syn_threshold, k) -> List[str]:
 
 
 def embed_synonyms_in_text(text: str, replacements: Dict[str, str]) -> str:
+    """
+    Replaces specified words in the text with their synonyms.
+
+    Args:
+        text (str): The input text.
+        replacements (Dict[str, str]): Mapping from original words to synonyms.
+
+    Returns:
+        str: Modified text with embedded synonyms.
+    """
     for target_word, synonym in replacements.items():
         text = text.replace(target_word, synonym)
     return text
+
+
+if __name__ == "__main__":
+    # Parameters
+    model_name = "mistralai/Mistral-7B-v0.1"
+    input_folder = "data"
+    output_folder = "results"
+    save_finetuned_folder = "models/finetuned_model"
+    sample_text = "The quick brown fox jumps over the lazy dog. Neural networks are fascinating."
+
+    print("=== Fine-Tuning Documents ===")
+    finetuned_model_path = fine_tune_documents(model_name, input_folder, save_finetuned_folder)
+    print(f"Fine-tuned model saved at: {finetuned_model_path}")
+
+    print("\n=== Running Tag & Tab ===")
+    mean_entropy = run_tag_and_tab(finetuned_model_path, input_folder, output_folder)
+    print(f"Mean sentence entropy for k=4: {mean_entropy}")
+
+    print("\n=== LexiMark: Identify High Entropy Words ===")
+    top_words = identify_high_entropy_words(sample_text, top_k=5)
+    print(f"Identified high-entropy words: {top_words}")
+
+    print("\n=== LexiMark: Recommend Synonyms ===")
+    replacements = recommend_synonyms(sample_text, synonym_method="context", syn_threshold=0.6, k=3)
+    print(f"Recommended replacements: {replacements}")
+
+    print("\n=== LexiMark: Embed Synonyms in Text ===")
+    modified_text = embed_synonyms_in_text(sample_text, replacements)
+    print(f"Modified text: {modified_text}")
+
+

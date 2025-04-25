@@ -1,4 +1,4 @@
-from torch.xpu import device
+# from torch.xpu import device
 from transformers import RobertaTokenizer, RobertaModel, RobertaForMaskedLM
 import torch
 import numpy as np

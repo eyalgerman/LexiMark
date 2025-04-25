@@ -6,14 +6,53 @@ from datasets import load_dataset
 import re
 from . import process_data
 from watermarks.basic_watermark import bottom_k_entropy_words
-
+from wordfreq import word_frequency
 
 def calculate_entropy(word_freq, total_words):
+    """
+    Calculates the entropy of a word given its frequency and total word count.
+
+    Args:
+        word_freq (int): Frequency of the word.
+        total_words (int): Total number of words in the corpus.
+
+    Returns:
+        float: Entropy value of the word.
+    """
     probability = word_freq / total_words
     return -probability * math.log2(probability)
 
 
+def generate_entropy_map_wordfreq(words, lang='en'):
+    """
+    Generates an entropy map for given words using `wordfreq` probabilities.
+
+    Args:
+        words (Iterable[str]): List or set of words to process.
+        lang (str): Language code used by `wordfreq`. Default is 'en' (English).
+
+    Returns:
+        dict: A dictionary mapping words to their entropy values.
+    """
+    entropy_map = {}
+    for word in words:
+        freq = word_frequency(word, lang)
+        if freq > 0:
+            entropy_map[word] = -freq * math.log2(freq)
+    return entropy_map
+
+
 def create_entropy_map(data_sources, mode='Books'):
+    """
+    Creates an entropy map from text data using word frequencies.
+
+    Args:
+        data_sources (list | dict): Input text sources. Can be file paths, strings, or datasets depending on mode.
+        mode (str): Processing mode. Supported: 'Books', 'WikiMIA', 'BookMIA', 'Arxiv', 'ECHR', 'PILE', 'Text(s)'.
+
+    Returns:
+        dict: A dictionary mapping each word to its entropy value.
+    """
     word_counts = Counter()
 
     if mode == 'Arxiv' or mode == 'ECHR':
@@ -24,10 +63,6 @@ def create_entropy_map(data_sources, mode='Books'):
                 sentence = sentence['input']
             words = sentence.split()
             word_counts.update(words)
-        # for dataset in data_sources:
-        #     for item in dataset:
-        #         words = item['text'].split()
-        #         word_counts.update(words)
     elif mode == 'Books':
         for file_path in data_sources:
             with open(file_path, 'r', encoding='utf-8') as file:
@@ -36,12 +71,7 @@ def create_entropy_map(data_sources, mode='Books'):
                     word_counts.update(words)
     elif mode == 'WikiMIA' or mode == 'BookMIA' or mode == "Gut":
         print(f"Started processing for mode: {mode}")
-        # dataset_name = "swj0419/WikiMIA" if mode == 'WikiMIA' else "swj0419/BookMIA" if mode == 'BookMIA' else "Sagivan100/BooksMIA_Gut"
-        # db_data = load_dataset(dataset_name, split=f"{mode}_length256" if mode == 'WikiMIA' else "train")
         db_data = process_data.load_data(mode=mode)[0]
-        # print(db_data)
-        # print(data_sources)
-        # db_data = data_sources
         for item in db_data:
             text_field = 'input' if mode == 'WikiMIA' else 'snippet'
             words = item[text_field].split()
@@ -53,21 +83,60 @@ def create_entropy_map(data_sources, mode='Books'):
                 sentence = sentence['input']
             words = sentence.split()
             word_counts.update(words)
+    elif mode == 'Text' or mode == 'Texts':
+        # For the Text mode, we assume data_sources is a dict of name of file and the text of it or list of texts
+        if isinstance(data_sources, str):
+            words = data_sources.split()
+            word_counts.update(words)
+            # For the Text mode, we assume data_sources is a dict of name of file and the text of it or list of texts
+        elif isinstance(data_sources, dict):
+            for text in data_sources.values():
+                words = text.split()
+                word_counts.update(words)
+        elif isinstance(data_sources, list):
+            for text in data_sources:
+                if isinstance(text, dict):
+                    words = text["input"].split()
+                    word_counts.update(words)
+                else:
+                    words = text.split()
+                    word_counts.update(words)
+        else:
+            raise ValueError(f"Unsupported mode: {mode}")
+    else:
+        raise ValueError(f"Unsupported mode: {mode}")
 
     total_words = sum(word_counts.values())
-    # print(f"Total words: {total_words}")
-    entropy_map = {word: calculate_entropy(freq, total_words) for word, freq in word_counts.items()}
+    # Generate the entropy map using word frequency
+    entropy_map = generate_entropy_map_wordfreq(word_counts.keys())
+    # entropy_map = {word: calculate_entropy(freq, total_words) for word, freq in word_counts.items()}
 
     return entropy_map
 
 
 def save_entropy_map(entropy_map, filename):
+    """
+    Saves the entropy map to a file.
+
+    Args:
+        entropy_map (dict): Dictionary of word entropy values.
+        filename (str): Path to the output file.
+    """
     with open(filename, 'w', encoding='utf-8') as file:
         for word, entropy in entropy_map.items():
             file.write(f"{word} {entropy}\n")
 
 
 def load_entropy_map(filename):
+    """
+    Loads an entropy map from a file.
+
+    Args:
+        filename (str): Path to the saved entropy file.
+
+    Returns:
+        dict: Dictionary of word entropy values.
+    """
     entropy_map = {}
     with open(filename, 'r', encoding='utf-8') as file:
         for line in file:
@@ -77,68 +146,63 @@ def load_entropy_map(filename):
 
 
 def sort_entropy_map(entropy_map, descending=True):
+    """
+    Sorts an entropy map based on entropy values.
+
+    Args:
+        entropy_map (dict): Dictionary of entropy values.
+        descending (bool): Whether to sort from highest to lowest. Default is True.
+
+    Returns:
+        List[Tuple[str, float]]: Sorted list of (word, entropy) tuples.
+    """
     return sorted(entropy_map.items(), key=lambda item: item[1], reverse=descending)
 
 
 def get_text_files(folder_path):
+    """
+    Retrieves all .txt files from a directory (recursively).
+
+    Args:
+        folder_path (str): Path to the root folder.
+
+    Returns:
+        List[str]: List of file paths ending with '.txt'.
+    """
     return [str(filepath) for filepath in Path(folder_path).rglob('*.txt')]
 
 
-def create_entropy_map_func(mode="BookMIA", folder1="None", folder2="None", train_val_pile="validation"):
-    if mode == 'Arxiv':
-        data_sources = [(load_dataset("RealTimeData/arxiv_alltime", '2017-01', split='train[:470]'), 0),
-                        (load_dataset("RealTimeData/arxiv_alltime", '2017-02', split='train[:470]'), 0),
-                        (load_dataset("RealTimeData/arxiv_alltime", '2017-03', split='train[:470]'), 0),
-                        (load_dataset("RealTimeData/arxiv_alltime", '2017-04', split='train[:470]'), 0),
-                        (load_dataset("RealTimeData/arxiv_alltime", '2017-05', split='train[:470]'), 0),
-                        (load_dataset("RealTimeData/arxiv_alltime", '2017-06', split='train[:470]'), 0),
-                        (load_dataset("RealTimeData/arxiv_alltime", '2017-07', split='train[:470]'), 0),
-                        (load_dataset("RealTimeData/arxiv_alltime", '2023-08', split='train[:520]'), 1),
-                        (load_dataset("RealTimeData/arxiv_alltime", '2023-09', split='train[:520]'), 1),
-                        (load_dataset("RealTimeData/arxiv_alltime", '2023-10', split='train[:520]'), 1),
-                        (load_dataset("RealTimeData/arxiv_alltime", '2023-11', split='train[:520]'), 1),
-                        (load_dataset("RealTimeData/arxiv_alltime", '2023-12', split='train[:520]'), 1)]
-
-    elif mode == 'Books':
-        data_sources = get_text_files(folder1) + get_text_files(folder2)
-
-    elif mode == 'WikiMIA':
-        data_sources = [load_dataset("swj0419/WikiMIA", split=f"WikiMIA_length256")]
-
-    elif mode == 'BookMIA':
-        data_sources = [load_dataset("swj0419/BookMIA", split=f"train")]
-
-    elif mode == 'Gut':
-        data_sources = [load_dataset("Sagivan100/BooksMIA_Gut", split=f"train")]
-    elif mode == 'PILE':
-        data_sources = process_data.load_data_pile(train_val_pile, num_samples=100000)
-    print("Creating entropy map...")
-    entropy_map = create_entropy_map(data_sources, mode=mode)
-
-    filename = "data/entropy_map.txt"
-    print(f"Saving entropy map to {filename}...")
-    save_entropy_map(entropy_map, filename)
-
-    # print("Loading entropy map...")
-    loaded_entropy_map = load_entropy_map(filename)
-
-    # print("Sorted Entropy Map:")
-    sorted_entropy_map = sort_entropy_map(loaded_entropy_map)
-    for word, entropy in sorted_entropy_map[:20]:
-        print(f"{word}: {entropy}")
-
-    print("Entropy map loaded and sorted successfully.")
-    print("Len of map = ", len(sorted_entropy_map))
-
-    return loaded_entropy_map, data_sources
-
-
 def strip_punctuation(word):
+    """
+    Strips leading and trailing punctuation from a word.
+
+    Args:
+        word (str): Input word.
+
+    Returns:
+        str: Cleaned word without punctuation.
+    """
     return word.strip(string.punctuation)
 
 
 def create_line_to_top_words_map(text, entropy_map, MAX_LEN_LINE_GENERATE, MIN_LEN_LINE_GENERATE, TOP_K_ENTROPY,
                                  nlp_spacy):
+    """
+    Creates a mapping from line numbers to top-k high-entropy words for each valid sentence.
+
+    Args:
+        text (str): Raw input text.
+        entropy_map (dict): A precomputed word-to-entropy mapping.
+        MAX_LEN_LINE_GENERATE (int): Maximum sentence length to include.
+        MIN_LEN_LINE_GENERATE (int): Minimum sentence length to include.
+        TOP_K_ENTROPY (int): Number of top-entropy words to extract per line.
+        nlp_spacy (spacy.lang): spaCy language model for sentence segmentation and NER.
+
+    Returns:
+        Tuple[dict, list]:
+            - Mapping from line number to list of top-entropy and named-entity words.
+            - List of valid sentences.
+    """
     # text = text.replace('\n', '')
     doc = nlp_spacy(text)
     # Debugging: convert iterator to list to check content
@@ -157,9 +221,4 @@ def create_line_to_top_words_map(text, entropy_map, MAX_LEN_LINE_GENERATE, MIN_L
             unique_words = top_k_words.union(ners)
             line_to_top_words_map[line_num] = list(unique_words)
 
-    # Print the results
-    # print("Ten Lowest Entropy Words:", sorted(entropy_map, key=entropy_map.get)[:200])
-    # print("Entropy Map:", entropy_map)
-    # print("Line to Top Words Map:", line_to_top_words_map)
-    # print("The sentences are: ", sentences)
     return line_to_top_words_map, sentences
