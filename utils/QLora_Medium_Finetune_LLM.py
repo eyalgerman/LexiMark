@@ -185,7 +185,7 @@ def upload_model_to_huggingface(output_directory, model_id):
     print("Model successfully uploaded to Hugging Face Hub.")
 
 
-def merge_and_upload_model(model_name, new_model, tokenizer, base_path):
+def merge_and_upload_model(model_name, new_model, tokenizer):
     """
     Merges LoRA weights with the base model and saves the resulting model.
 
@@ -193,8 +193,6 @@ def merge_and_upload_model(model_name, new_model, tokenizer, base_path):
         model_name (str): The base model's name or path.
         new_model (str): Path to the LoRA fine-tuned model directory.
         tokenizer (transformers.PreTrainedTokenizer): Tokenizer used with the model.
-        base_path (str): Base path where merged model should be saved.
-
     Returns:
         str: Path to the merged model directory.
     """
@@ -324,7 +322,7 @@ def main(model_name, data_path, base_path):
     new_model, tokenizer = fine_tune_model(model_name, data_path, base_path)
 
     # new_model, tokenizer = resume_training(model_name, data_path, data_name, checkpoint_dir)
-    output_merged_dir = merge_and_upload_model(model_name, new_model, tokenizer, base_path)
+    output_merged_dir = merge_and_upload_model(model_name, new_model, tokenizer)
     use_fine_tune_model(output_merged_dir)
     return output_merged_dir
 

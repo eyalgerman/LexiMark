@@ -54,7 +54,8 @@ class Config:
         Args:
             args (argparse.Namespace): Parsed command-line arguments.
         """
-        with open("config.json", "r") as file:
+        config_path = os.path.join(os.path.dirname(__file__), "config.json")
+        with open(config_path, "r") as file:
             config = json.load(file)
 
         API_KEY = config["OPENAI_API_KEY"]

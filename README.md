@@ -26,13 +26,15 @@ A configuration file (`config.json`) is required with:
 
 - `API_KEY`: API key for OpenAI models.
 - `DATA_DIR`: Path where to save datasets and models.
+- `HUGGINGFACE_TOKEN`: Token for Hugging Face access.
 
 Example `config.json`:
 
 ```json
 {
   "API_KEY": "your_api_key",
-  "DATA_DIR": "path/to/data"
+  "DATA_DIR": "path/to/data",
+  "HUGGINGFACE_TOKEN": "your_huggingface_token_here"
 }
 ```
 

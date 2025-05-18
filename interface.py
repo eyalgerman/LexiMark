@@ -1,15 +1,17 @@
 import os
 from datetime import datetime
-
 import spacy
 from typing import List, Dict, Optional
-
 import watermark_detection.watermark_detection_2
 from utils import file_processing, process_data, process_csv, QLora_Medium_Finetune_LLM
 from utils.create_map_entropy_both import create_entropy_map
 from watermarks.basic_watermark import bottom_k_entropy_words
 from watermarks.watermark_based_k import replace_higher_top_k_entropy_with_higher_entropy
-
+import pickle
+import numpy as np
+from pathlib import Path
+from sklearn.svm import OneClassSVM
+from sklearn.preprocessing import StandardScaler
 
 ### Tag & Tab ###
 
@@ -35,7 +37,6 @@ def fine_tune_documents(model_name, folder_path, save_folder):
     return QLora_Medium_Finetune_LLM.main(model_name, csv_file, save_folder)
 
 
-
 def run_tag_and_tab(model_name, folder_path, output_folder):
     """
     Executes the Tag & Tab watermark detection method and computes average entropy score.
@@ -55,6 +56,70 @@ def run_tag_and_tab(model_name, folder_path, output_folder):
         records.append({"input": sentence, "label": 0})
     metrics_df, preds_df = watermark_detection.watermark_detection_2.main2(model_name, records, output_folder)
     return preds_df["sentence_entropy_log_likelihood_k=4"].mean()
+
+
+def classifier_builder(nonmember_dir, model_name, save_path, nu=0.05):
+    """
+    Builds a membership inference classifier using One-Class SVM trained on non-member documents.
+
+    Args:
+        nonmember_dir (str): Path to folder containing .txt files of non-member documents.
+        model_name (str): Name or path of the model to use with Tag & Tab.
+        save_path (str): Path to save the trained classifier.
+        nu (float): Estimated fraction of training errors (lower = stricter boundary).
+
+    Returns:
+        None
+    """
+    out_dir = "tagtab_out"
+    os.makedirs(out_dir, exist_ok=True)
+
+    print("Scoring non-member documents using Tag&Tab...")
+    scores = []
+    for file in Path(nonmember_dir).glob("*.txt"):
+        score = run_tag_and_tab(model_name, str(file.parent), out_dir)
+        scores.append(score)
+
+    X = np.array(scores).reshape(-1, 1)
+
+    scaler = StandardScaler()
+    X_scaled = scaler.fit_transform(X)
+
+    clf = OneClassSVM(kernel="rbf", nu=nu)
+    clf.fit(X_scaled)
+
+    with open(save_path, "wb") as f:
+        pickle.dump((scaler, clf), f)
+
+    print(f"OOD detector trained and saved to {save_path}.")
+    print(f"Mean score: {np.mean(scores):.4f} | std: {np.std(scores):.4f}")
+
+
+def membership_inference_tag_and_tab(doc_dir, model_name, model_path):
+    """
+    Predicts whether a document is in-distribution (i.e., member) using the trained OOD classifier.
+
+    Args:
+        doc_dir (str): Path to a folder containing a single .txt file to test.
+        model_name (str): Name or path of the model used in Tag & Tab.
+        model_path (str): Path to the saved classifier.
+
+    Returns:
+        bool: True if predicted as a member (in-distribution), False otherwise.
+    """
+    out_dir = "tagtab_out"
+    os.makedirs(out_dir, exist_ok=True)
+
+    score = run_tag_and_tab(model_name, doc_dir, out_dir)
+
+    with open(model_path, "rb") as f:
+        scaler, clf = pickle.load(f)
+
+    X = np.array([[score]])
+    X_scaled = scaler.transform(X)
+
+    prediction = clf.predict(X_scaled)[0]  # +1 = inlier (member), -1 = outlier (non-member)
+    return prediction == 1 # Member == True | Non-Memebr == False
 
 
 ### LexiMark ###

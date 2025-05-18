@@ -3,6 +3,9 @@ import json
 import os
 import re
 from datetime import datetime
+
+from transformers import AutoTokenizer
+
 from watermarks import watermark_backdoor
 from watermarks import watermark_based_k
 from watermarks import watermark_based_percentage
@@ -238,6 +241,46 @@ def find_existing_model_folder(model_name, data_name, num_epochs, directory):
         return None
 
 
+def find_existing_unmerged_model_folder(model_name, data_name, num_epochs, directory):
+    """
+    Searches for an existing unmerged adapter folder that matches the naming pattern.
+
+    The function looks for adapter folders (unmerged) containing the model name, data name, and epoch count.
+    Among matches, the newest folder is selected based on a timestamp in the folder name.
+
+    Args:
+        model_name (str): Name or path of the base model.
+        data_name (str): Name of the dataset used for fine-tuning.
+        num_epochs (int): Number of training epochs.
+        directory (str): Path to the 'Unmerged' models directory.
+
+    Returns:
+        Optional[str]: Path to the most recent matching folder, or None if not found.
+    """
+    model_name_base = model_name.split('/')[-1]
+    data_name = data_name.split('/')[-1].replace(".csv", "")
+    search_pattern = f"{model_name_base}_{data_name}_QLORA_*_epochs_{num_epochs}"
+    search_path = os.path.join(directory, "Unmerged", search_pattern)
+
+    matching_folders = glob.glob(search_path)
+    print(f'Found {len(matching_folders)} unmerged folders for {model_name_base} and {data_name}')
+    print(f'Searching for: {search_path}')
+
+    if matching_folders:
+        folders_with_timestamps = [(folder, extract_timestamp_from_folder(folder)) for folder in matching_folders]
+        valid_folders = [(folder, ts) for folder, ts in folders_with_timestamps if ts is not None]
+
+        if valid_folders:
+            valid_folders.sort(key=lambda x: x[1], reverse=True)
+            newest_folder = valid_folders[0][0]
+            print(f"Found newest unmerged model folder: {newest_folder}")
+            return newest_folder
+        else:
+            print("No valid timestamps found in unmerged folder names.")
+    return None
+
+
+
 def openai_workflow(args, filename1, filename2, filename):
     """
     Handles fine-tuning and watermark detection for OpenAI GPT models.
@@ -309,6 +352,19 @@ if __name__ == '__main__':
         if new_model:
             args.target_model = new_model
             print(f"Using existing model folder: {new_model}")
+        else:
+            unmerged_model = find_existing_unmerged_model_folder(model, data, num_epochs=1, directory=models_dir)
+            if unmerged_model:
+                print(f"Using unmerged model folder: {unmerged_model}")
+                tokenizer = AutoTokenizer.from_pretrained(model)
+                new_model = QLora_Medium_Finetune_LLM.merge_and_upload_model(model, unmerged_model, tokenizer=tokenizer)
+                if new_model:
+                    print(f"Successfully merged and uploaded model: {new_model}")
+                    args.target_model = new_model
+                else:
+                    print("Failed to merge and upload the model.")
+            else:
+                print("No existing model found. Proceeding to fine-tune.")
     if not new_model:
         print("Start Fine-tuning the model", flush=True)
         # Fine-tune the model

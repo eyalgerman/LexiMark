@@ -10,8 +10,8 @@ import time
 import numpy as np
 
 from synonyms_methods.Lexical_Substitution.filter import filter_words
-from scores import calc_scores
-from load_models import load_transformers
+from synonyms_methods.Lexical_Substitution.scores import calc_scores
+from synonyms_methods.Lexical_Substitution.load_models import load_transformers
 import warnings
 warnings.filterwarnings("ignore", category=UserWarning, message="Discarded redundant search")
 
