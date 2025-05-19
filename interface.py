@@ -3,7 +3,7 @@ from datetime import datetime
 import spacy
 from typing import List, Dict, Optional
 import watermark_detection.watermark_detection_2
-from utils import file_processing, process_data, process_csv, QLora_Medium_Finetune_LLM
+from utils import file_processing, process_data, process_csv, QLora_finetune_LLM
 from utils.create_map_entropy_both import create_entropy_map
 from watermarks.basic_watermark import bottom_k_entropy_words
 from watermarks.watermark_based_k import replace_higher_top_k_entropy_with_higher_entropy
@@ -12,6 +12,8 @@ import numpy as np
 from pathlib import Path
 from sklearn.svm import OneClassSVM
 from sklearn.preprocessing import StandardScaler
+import shutil
+import tempfile
 
 ### Tag & Tab ###
 
@@ -34,7 +36,7 @@ def fine_tune_documents(model_name, folder_path, save_folder):
     csv_file = os.path.join(folder_path, f"train_data_{timestamp}.csv")
     process_csv.write_sentences_to_csv(sentences, csv_file)
     # Fine-tune the model
-    return QLora_Medium_Finetune_LLM.main(model_name, csv_file, save_folder)
+    return QLora_finetune_LLM.main(model_name, csv_file, save_folder)
 
 
 def run_tag_and_tab(model_name, folder_path, output_folder):
@@ -54,11 +56,11 @@ def run_tag_and_tab(model_name, folder_path, output_folder):
     records = []
     for sentence in sentences:
         records.append({"input": sentence, "label": 0})
-    metrics_df, preds_df = watermark_detection.watermark_detection_2.main2(model_name, records, output_folder)
+    preds_df = watermark_detection.watermark_detection_2.main2(model_name, records, output_folder)
     return preds_df["sentence_entropy_log_likelihood_k=4"].mean()
 
 
-def classifier_builder(nonmember_dir, model_name, save_path, nu=0.05):
+def classifier_builder(nonmember_dir, model_name, save_path, nu=0.05, output_folder="tagtab_out"):
     """
     Builds a membership inference classifier using One-Class SVM trained on non-member documents.
 
@@ -67,21 +69,22 @@ def classifier_builder(nonmember_dir, model_name, save_path, nu=0.05):
         model_name (str): Name or path of the model to use with Tag & Tab.
         save_path (str): Path to save the trained classifier.
         nu (float): Estimated fraction of training errors (lower = stricter boundary).
+        output_folder (str): Directory to store detection results.
 
     Returns:
         None
     """
-    out_dir = "tagtab_out"
-    os.makedirs(out_dir, exist_ok=True)
+    os.makedirs(output_folder, exist_ok=True)
 
-    print("Scoring non-member documents using Tag&Tab...")
-    scores = []
-    for file in Path(nonmember_dir).glob("*.txt"):
-        score = run_tag_and_tab(model_name, str(file.parent), out_dir)
-        scores.append(score)
+    texts = file_processing.extract_texts_from_folder(nonmember_dir).values()
+    sentences = process_data.split_texts_into_sentences(texts)
+    records = []
+    for sentence in sentences:
+        records.append({"input": sentence, "label": 0})
+    preds_df = watermark_detection.watermark_detection_2.main2(model_name, records, output_folder)
+    scores =  preds_df["sentence_entropy_log_likelihood_k=4"].values
 
     X = np.array(scores).reshape(-1, 1)
-
     scaler = StandardScaler()
     X_scaled = scaler.fit_transform(X)
 
@@ -95,7 +98,7 @@ def classifier_builder(nonmember_dir, model_name, save_path, nu=0.05):
     print(f"Mean score: {np.mean(scores):.4f} | std: {np.std(scores):.4f}")
 
 
-def membership_inference_tag_and_tab(doc_dir, model_name, model_path):
+def membership_inference_tag_and_tab(doc_dir, model_name, model_path, output_folder="tagtab_out"):
     """
     Predicts whether a document is in-distribution (i.e., member) using the trained OOD classifier.
 
@@ -103,14 +106,14 @@ def membership_inference_tag_and_tab(doc_dir, model_name, model_path):
         doc_dir (str): Path to a folder containing a single .txt file to test.
         model_name (str): Name or path of the model used in Tag & Tab.
         model_path (str): Path to the saved classifier.
+        output_folder (str): Directory to store detection results.
 
     Returns:
         bool: True if predicted as a member (in-distribution), False otherwise.
     """
-    out_dir = "tagtab_out"
-    os.makedirs(out_dir, exist_ok=True)
+    os.makedirs(output_folder, exist_ok=True)
 
-    score = run_tag_and_tab(model_name, doc_dir, out_dir)
+    score = run_tag_and_tab(model_name, doc_dir, output_folder)
 
     with open(model_path, "rb") as f:
         scaler, clf = pickle.load(f)
@@ -205,6 +208,17 @@ if __name__ == "__main__":
     print("\n=== Running Tag & Tab ===")
     mean_entropy = run_tag_and_tab(finetuned_model_path, input_folder, output_folder)
     print(f"Mean sentence entropy for k=4: {mean_entropy}")
+
+    print("\n=== Classifier Builder ===")
+    classifier_path = "data/tagtab_classifier.pkl"
+    input_folder = "data/classifier_data"
+    classifier_builder(input_folder, finetuned_model_path, classifier_path)
+    print(f"Classifier saved at: {classifier_path}")
+
+    print("\n=== Membership Inference ===")
+    test_folder = "data"
+    prediction = membership_inference_tag_and_tab(test_folder, finetuned_model_path, classifier_path)
+    print(f"Document is {'member' if prediction else 'non-member'}.")
 
     print("\n=== LexiMark: Identify High Entropy Words ===")
     top_words = identify_high_entropy_words(sample_text, top_k=5)

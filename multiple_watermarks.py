@@ -1,8 +1,8 @@
 import os
 
-from utils import process_data, QLora_Medium_Finetune_LLM
+from utils import process_data, QLora_finetune_LLM, pretrain_LLM
 from watermark_detection import watermark_detection_2
-from main import init_watermark, Config
+from main import init_watermark, Config, check_and_fine_tune
 from options import Options
 
 
@@ -99,15 +99,24 @@ if __name__ == '__main__':
     )
 
     print(f"File saved to {filename1}, {filename2}")
+    args.data = filename.replace(".csv", ".jsonl")
     print("Start Fine-tuning the model")
     # Fine-tune the model
+    use_existing_model = True if args.use_existing.lower() in ['all', 'model'] else False
     model = args.target_model
     data = filename1
-    new_model = QLora_Medium_Finetune_LLM.main(model, data)
-    print("Finished Fine-tuning the model: ", new_model)
-    args.data = filename.replace(".csv", ".jsonl")
-    args.target_model = new_model
+    models_dir = os.path.join(config.data_dir, "Models")
+    if args.train_mode == "finetune":
+        new_model = check_and_fine_tune(args, model, data, use_existing_model)
+        args.target_model = new_model
+    elif args.train_mode == "pretrain":
+        new_model = pretrain_LLM.main(model, data, base_path=models_dir)
+        args.target_model = new_model
+    else:
+        new_model = model
+        print(f"Using existing model: {model}")
     # Use the fine-tuned model
-    print("Start detection on the model")
+    print("Start detection on the model", flush=True)
     watermark_detection_2.main(args)
+    print("Done", flush=True)
 

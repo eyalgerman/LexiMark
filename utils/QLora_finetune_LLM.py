@@ -18,7 +18,7 @@ from transformers import (
     AutoTokenizer,
     TrainingArguments, LlamaConfig,
 )
-from trl import SFTTrainer
+from trl import SFTTrainer, SFTConfig
 from huggingface_hub import login, HfApi, HfFolder
 
 
@@ -68,9 +68,6 @@ def fine_tune_model(model_name, data_path, base_path, resume_from_checkpoint=Non
 
     print(model)
     print(f"Model is running on: {next(model.parameters()).device}")
-    # Inspect model to identify the correct target modules
-    # for name, module in model.named_modules():
-    #     print(name)
 
     target_modules = [
             'k_proj', 'q_proj', 'v_proj', 'o_proj', "gate_proj", "down_proj", "up_proj", "lm_head"
@@ -104,12 +101,32 @@ def fine_tune_model(model_name, data_path, base_path, resume_from_checkpoint=Non
     # new model name
     new_model = f"{model_name.split('/')[-1]}_{data_name}_QLORA_{current_time}_epochs_{num_epochs}"
 
-    training_arguments = TrainingArguments(
+    # training_arguments = TrainingArguments(
+    #     output_dir=f"{base_path}checkpoints/results_{new_model}",
+    #     evaluation_strategy="epoch",
+    #     optim="paged_adamw_8bit",
+    #     per_device_train_batch_size=2,
+    #     per_device_eval_batch_size=1,
+    #     gradient_accumulation_steps=1,
+    #     log_level="debug",
+    #     save_steps=5000,
+    #     logging_steps=1000,
+    #     learning_rate=3e-4,
+    #     num_train_epochs=num_epochs,
+    #     warmup_steps=20,
+    #     lr_scheduler_type="cosine",
+    #     report_to=[],  # Prevents any integration logs
+    #     logging_strategy="no",  # Disables console logging for progress updates
+    #     save_total_limit=3,
+    #     resume_from_checkpoint=resume_from_checkpoint,
+    #     disable_tqdm=False  # Disables tqdm progress bars for both training and evaluation  -TO SHOW progress
+    # )
+    training_arguments = SFTConfig(
         output_dir=f"{base_path}checkpoints/results_{new_model}",
-        evaluation_strategy="epoch",
+        # evaluation_strategy="epoch",
         optim="paged_adamw_8bit",
         per_device_train_batch_size=2,
-        per_device_eval_batch_size=2,
+        per_device_eval_batch_size=1,
         gradient_accumulation_steps=1,
         log_level="debug",
         save_steps=5000,
@@ -119,32 +136,34 @@ def fine_tune_model(model_name, data_path, base_path, resume_from_checkpoint=Non
         warmup_steps=20,
         lr_scheduler_type="cosine",
         report_to=[],  # Prevents any integration logs
-        logging_strategy="no",  # Disables console logging for progress updates
+        logging_strategy="no",
         save_total_limit=3,
         resume_from_checkpoint=resume_from_checkpoint,
-        disable_tqdm=False  # Disables tqdm progress bars for both training and evaluation  -TO SHOW progress
+        disable_tqdm=False,
+        dataset_text_field="text"
     )
 
     data_files = {'train': data_path, 'test': data_path}
     dataset = load_dataset('csv', data_files=data_files, verbose=0)
 
     # Ensure the dataset has the 'text' field or update the column name accordingly
-    # def tokenize_function(examples):
-    #     return tokenizer(examples['text'], padding="max_length", truncation=True)
-    #
-    # tokenized_datasets = dataset.map(tokenize_function, batched=True)
+    def tokenize_function(examples):
+        return tokenizer(examples['text'], padding="max_length", truncation=True)
+
+    tokenized_datasets = dataset.map(tokenize_function, batched=True)
 
     trainer = SFTTrainer(
         model=model,
-        train_dataset=dataset['train'],
-        eval_dataset=dataset['test'],
-        peft_config=peft_config,
-        dataset_text_field="text",
-        tokenizer=tokenizer,
         args=training_arguments,
+        train_dataset=tokenized_datasets['train'],
+        eval_dataset=tokenized_datasets['test'],
+        peft_config=peft_config,
+        # dataset_text_field="text",
+        # tokenizer=tokenizer,
     )
 
     print_trainable_parameters(model)
+    torch.cuda.empty_cache()
     trainer.evaluate()
     trainer.train()
 

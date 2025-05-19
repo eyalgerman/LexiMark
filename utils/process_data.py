@@ -284,7 +284,7 @@ def load_clean_data_and_split(mode='Books', folder1="None", folder2="None", from
             output_file_non_member = output_file.replace(".csv", "_non_member.csv")
         process_csv.write_sentences_to_csv(watermark_sentences_member,
                                            file_name=output_file_member)
-        procces_csv.write_sentences_to_csv(watermark_sentences_non_member, file_name=output_file_non_member)
+        process_csv.write_sentences_to_csv(watermark_sentences_non_member, file_name=output_file_non_member)
         output_jsonl_path = output_file.replace(".csv", ".jsonl")
         process_csv.csv_to_jsonl(output_file_member, output_file_non_member, output_jsonl_path)
         return output_file_member, output_file_non_member

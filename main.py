@@ -6,7 +6,8 @@ from datetime import datetime
 
 from transformers import AutoTokenizer
 
-from watermarks import watermark_backdoor
+from utils.pretrain_LLM import pretrain_model
+from watermarks import watermark_backdoor, deduplication_filter
 from watermarks import watermark_based_k
 from watermarks import watermark_based_percentage
 from watermarks import watermark_based_prompt
@@ -14,7 +15,7 @@ from watermarks import basic_watermark
 from watermarks import watermark_highest_based_model_prob
 from watermarks import watermark_tree
 from watermarks import robustness_watermark
-from utils import QLora_Medium_Finetune_LLM, openAI_finetune_GPT
+from utils import QLora_finetune_LLM, openAI_finetune_GPT, pretrain_LLM
 from watermarks.baselines import TextMarker_watrmark
 from watermarks.baselines import random_seq_watermark
 from watermarks.baselines import unicode_lookalike_watermark
@@ -150,6 +151,14 @@ def init_watermark(args, method):
     elif method[:10] == "paraphrase":
         watermark = paraphrase_text(method[11:], threshold=0.6)
         params = {'paraphrase-method': method[11:], 'th': 0.6}
+    elif method == "deduplication-exact":
+        watermark = deduplication_filter.add_watermark_ngram_exact(n= args.n, model_name=args.target_model)
+        params = {'n': args.n, "model": args.target_model.split('/')[-1]}
+    elif method == "deduplication-fuzzy":
+        watermark = deduplication_filter.add_fuzzy_duplicate_filter(threshold=0.8)
+        params = {'fuzzy-th': 0.8}
+
+
     # Backdoor methods
     elif method == "top-k-higher-backdoor":
         watermark = watermark_backdoor.add_watermark_higher(args.k, mode=args.mode, synonym_method=args.synonym_method, syn_threshold=args.context_th, seed=args.seed, backdoor_percentage=args.p)
@@ -309,6 +318,36 @@ def openai_workflow(args, filename1, filename2, filename):
     watermark_detection_2.main(args)
 
 
+def check_and_fine_tune(args, model, data, use_existing_model):
+    new_model = None
+    if use_existing_model:
+        # Find the existing model folder
+        os.makedirs(models_dir, exist_ok=True)
+        new_model = find_existing_model_folder(model, data, num_epochs=1, directory=models_dir)
+        if new_model:
+            args.target_model = new_model
+            print(f"Using existing model folder: {new_model}")
+        else:
+            unmerged_model = find_existing_unmerged_model_folder(model, data, num_epochs=1, directory=models_dir)
+            if unmerged_model:
+                print(f"Using unmerged model folder: {unmerged_model}")
+                tokenizer = AutoTokenizer.from_pretrained(model)
+                new_model = QLora_finetune_LLM.merge_and_upload_model(model, unmerged_model, tokenizer=tokenizer)
+                if new_model:
+                    print(f"Successfully merged and uploaded model: {new_model}")
+                    args.target_model = new_model
+                else:
+                    print("Failed to merge and upload the model.")
+            else:
+                print("No existing model found. Proceeding to fine-tune.")
+    if not new_model:
+        print("Start Fine-tuning the model", flush=True)
+        # Fine-tune the model
+        new_model = QLora_finetune_LLM.main(model, data, base_path=models_dir)
+        print("Finished Fine-tuning the model: ", new_model, flush=True)
+        args.target_model = new_model
+    return new_model
+
 
 if __name__ == '__main__':
     """
@@ -343,35 +382,16 @@ if __name__ == '__main__':
         openai_workflow(args, filename1, filename2, filename)
         exit(0)
     data = filename1
-    new_model = None
     models_dir = os.path.join(config.data_dir, "Models")
-    if use_existing_model:
-        # Find the existing model folder
-        os.makedirs(models_dir, exist_ok=True)
-        new_model = find_existing_model_folder(model, data, num_epochs=1, directory=models_dir)
-        if new_model:
-            args.target_model = new_model
-            print(f"Using existing model folder: {new_model}")
-        else:
-            unmerged_model = find_existing_unmerged_model_folder(model, data, num_epochs=1, directory=models_dir)
-            if unmerged_model:
-                print(f"Using unmerged model folder: {unmerged_model}")
-                tokenizer = AutoTokenizer.from_pretrained(model)
-                new_model = QLora_Medium_Finetune_LLM.merge_and_upload_model(model, unmerged_model, tokenizer=tokenizer)
-                if new_model:
-                    print(f"Successfully merged and uploaded model: {new_model}")
-                    args.target_model = new_model
-                else:
-                    print("Failed to merge and upload the model.")
-            else:
-                print("No existing model found. Proceeding to fine-tune.")
-    if not new_model:
-        print("Start Fine-tuning the model", flush=True)
-        # Fine-tune the model
-        new_model = QLora_Medium_Finetune_LLM.main(model, data, base_path=models_dir)
-        print("Finished Fine-tuning the model: ", new_model, flush=True)
+    if args.train_mode == "finetune":
+        new_model = check_and_fine_tune(args, model, data, use_existing_model)
         args.target_model = new_model
-
+    elif args.train_mode == "pretrain":
+        new_model = pretrain_LLM.main(model, data, base_path=models_dir)
+        args.target_model = new_model
+    else:
+        new_model = model
+        print(f"Using existing model: {model}")
     # Use the fine-tuned model
     print("Start detection on the model", flush=True)
     watermark_detection_2.main(args)

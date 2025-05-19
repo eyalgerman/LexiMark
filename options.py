@@ -42,6 +42,10 @@ class Options:
         self.parser.add_argument('--seed', type=int, default=42, help="the seed for the random synonym method")
         self.parser.add_argument('--use_existing', type=str, default='all', help="whether to use existing data and model")
         self.parser.add_argument('--p', type=float, default=0.2, help="the percentage of words to replace")
+        self.parser.add_argument('--n', type=int, default=50, help="Ngram size for the n-gram method")
+
+        # Pretraining options
+        self.parser.add_argument('--train_mode', type=str, default="finetune", help="the mode to use for training: pretrain, finetune, none")
 
 class Config:
     def __init__(self, args):
