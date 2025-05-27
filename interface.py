@@ -3,8 +3,10 @@ from datetime import datetime
 import spacy
 from typing import List, Dict, Optional
 import watermark_detection.watermark_detection_2
+from options import config_instance
 from utils import file_processing, process_data, process_csv, QLora_finetune_LLM
 from utils.create_map_entropy_both import create_entropy_map
+from watermarks import watermark_based_k
 from watermarks.basic_watermark import bottom_k_entropy_words
 from watermarks.watermark_based_k import replace_higher_top_k_entropy_with_higher_entropy
 import pickle
@@ -17,7 +19,7 @@ import tempfile
 
 ### Tag & Tab ###
 
-def fine_tune_documents(model_name, folder_path, save_folder):
+def fine_tune_documents(model_name, folder_path, save_folder, watermark=False, k=4, mode="Text",synonym_method="context", syn_threshold=0.8):
     """
     Fine-tunes a model on text extracted from a folder using QLoRA.
 
@@ -31,9 +33,16 @@ def fine_tune_documents(model_name, folder_path, save_folder):
     """
     texts = file_processing.extract_texts_from_folder(folder_path).values()
     sentences = process_data.split_texts_into_sentences(texts)
+    if watermark:
+        # Add watermark to sentences
+        watermark = watermark_based_k.add_watermark_higher(k, mode, synonym_method, syn_threshold=syn_threshold)
+        sentences = watermark(sentences)
     # Write sentences to CSV
     timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-    csv_file = os.path.join(folder_path, f"train_data_{timestamp}.csv")
+    if watermark:
+        csv_file = os.path.join(folder_path, f"watermarked_train_data_{timestamp}.csv")
+    else:
+        csv_file = os.path.join(folder_path, f"train_data_{timestamp}.csv")
     process_csv.write_sentences_to_csv(sentences, csv_file)
     # Fine-tune the model
     return QLora_finetune_LLM.main(model_name, csv_file, save_folder)
@@ -60,7 +69,7 @@ def run_tag_and_tab(model_name, folder_path, output_folder):
     return preds_df["sentence_entropy_log_likelihood_k=4"].mean()
 
 
-def classifier_builder(nonmember_dir, model_name, save_path, nu=0.05, output_folder="tagtab_out"):
+def classifier_builder(nonmember_dir, model_name, save_path, nu=0.05, output_folder="tagtab_out", watermark=False, k=4, mode="Text",synonym_method="context", syn_threshold=0.8):
     """
     Builds a membership inference classifier using One-Class SVM trained on non-member documents.
 
@@ -78,13 +87,21 @@ def classifier_builder(nonmember_dir, model_name, save_path, nu=0.05, output_fol
 
     texts = file_processing.extract_texts_from_folder(nonmember_dir).values()
     sentences = process_data.split_texts_into_sentences(texts)
+    if watermark:
+        # Add watermark to sentences
+        watermark = watermark_based_k.add_watermark_higher(k, mode, synonym_method, syn_threshold=syn_threshold)
+        sentences = watermark(sentences)
     records = []
     for sentence in sentences:
         records.append({"input": sentence, "label": 0})
     preds_df = watermark_detection.watermark_detection_2.main2(model_name, records, output_folder)
     scores =  preds_df["sentence_entropy_log_likelihood_k=4"].values
-
-    X = np.array(scores).reshape(-1, 1)
+    # Remove NaNs
+    mask = ~np.isnan(scores)
+    X = np.array(scores)[mask].reshape(-1, 1)
+    # X = np.array(scores).reshape(-1, 1)
+    if len(X) == 0:
+        raise ValueError("No valid scores to train on (all are NaN). Check your data pipeline.")
     scaler = StandardScaler()
     X_scaled = scaler.fit_transform(X)
 
@@ -195,14 +212,19 @@ def embed_synonyms_in_text(text: str, replacements: Dict[str, str]) -> str:
 
 if __name__ == "__main__":
     # Parameters
+    output_folder = config_instance.data_dir
     model_name = "mistralai/Mistral-7B-v0.1"
-    input_folder = "data"
-    output_folder = "results"
-    save_finetuned_folder = "models/finetuned_model"
+    # input_folder = "data"
+    input_folder = output_folder + "data/member/"
+    # output_folder = output_folder + "results"
+    # output_folder = "results"
+    # save_finetuned_folder = "models/"
+    save_finetuned_folder = output_folder + "models/"
     sample_text = "The quick brown fox jumps over the lazy dog. Neural networks are fascinating."
 
     print("=== Fine-Tuning Documents ===")
-    finetuned_model_path = fine_tune_documents(model_name, input_folder, save_finetuned_folder)
+    watermarked_finetuned_model_path = fine_tune_documents(model_name, input_folder, save_finetuned_folder, watermark=True)
+    finetuned_model_path = fine_tune_documents(model_name, input_folder, save_finetuned_folder, watermark=False)
     print(f"Fine-tuned model saved at: {finetuned_model_path}")
 
     print("\n=== Running Tag & Tab ===")
@@ -210,15 +232,25 @@ if __name__ == "__main__":
     print(f"Mean sentence entropy for k=4: {mean_entropy}")
 
     print("\n=== Classifier Builder ===")
-    classifier_path = "data/tagtab_classifier.pkl"
-    input_folder = "data/classifier_data"
-    classifier_builder(input_folder, finetuned_model_path, classifier_path)
+    classifier_path = output_folder + "data/tagtab_classifier.pkl"
+    input_folder = output_folder + "data/non-member-classifier/"
+    classifier_builder(input_folder, finetuned_model_path, classifier_path, output_folder=output_folder)
+    watermark_classifier_path = output_folder + "data/watermark_tagtab_classifier.pkl"
+    classifier_builder(input_folder, watermarked_finetuned_model_path, watermark_classifier_path, output_folder=output_folder,watermark=True)
+
     print(f"Classifier saved at: {classifier_path}")
 
     print("\n=== Membership Inference ===")
-    test_folder = "data"
-    prediction = membership_inference_tag_and_tab(test_folder, finetuned_model_path, classifier_path)
+    test_member_folder = output_folder + "data/member/"
+    test_non_member_folder = output_folder + "data/non-member/"
+    prediction = membership_inference_tag_and_tab(test_member_folder, finetuned_model_path, classifier_path, output_folder=output_folder)
+    print(f"We entered the member folder:")
     print(f"Document is {'member' if prediction else 'non-member'}.")
+
+    prediction = membership_inference_tag_and_tab(test_non_member_folder, finetuned_model_path, classifier_path, output_folder=output_folder)
+    print(f"We entered the non-member folder:")
+    print(f"Document is {'member' if prediction else 'non-member'}.")
+
 
     print("\n=== LexiMark: Identify High Entropy Words ===")
     top_words = identify_high_entropy_words(sample_text, top_k=5)
