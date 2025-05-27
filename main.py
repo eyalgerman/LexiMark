@@ -6,6 +6,7 @@ from datetime import datetime
 
 from transformers import AutoTokenizer
 
+from utils.instruction_tuning import instruction_tune
 from utils.pretrain_LLM import pretrain_model
 from watermarks import watermark_backdoor, deduplication_filter
 from watermarks import watermark_based_k
@@ -15,7 +16,7 @@ from watermarks import basic_watermark
 from watermarks import watermark_highest_based_model_prob
 from watermarks import watermark_tree
 from watermarks import robustness_watermark
-from utils import QLora_finetune_LLM, openAI_finetune_GPT, pretrain_LLM
+from utils import QLora_finetune_LLM, openAI_finetune_GPT, pretrain_LLM, instruction_tuning
 from watermarks.baselines import TextMarker_watrmark
 from watermarks.baselines import random_seq_watermark
 from watermarks.baselines import unicode_lookalike_watermark
@@ -93,7 +94,9 @@ def init_watermark(args, method):
     elif method == "top-k-lowest":
         watermark = watermark_based_k.add_watermark_lower(args.k, args.mode, args.synonym_method, syn_threshold=args.context_th)
         params = {'syn': args.synonym_method, 'k': args.k}
-    elif method == "top-k-higher":
+    elif method == "top-k-higher" or method == "ours" or method.lower() == "leximark": # leximark
+        method = "top-k-higher"
+        args.method = method
         watermark = watermark_based_k.add_watermark_higher(args.k, args.mode, args.synonym_method, syn_threshold=args.context_th)
         params = {'syn': args.synonym_method, 'k': args.k}
     elif method == "top-k-random":
@@ -289,6 +292,45 @@ def find_existing_unmerged_model_folder(model_name, data_name, num_epochs, direc
     return None
 
 
+def find_existing_Pretrained_model_folder(model_name, data_name, num_epochs, directory):
+    """
+    Searches for an existing unmerged adapter folder that matches the naming pattern.
+
+    The function looks for adapter folders (unmerged) containing the model name, data name, and epoch count.
+    Among matches, the newest folder is selected based on a timestamp in the folder name.
+
+    Args:
+        model_name (str): Name or path of the base model.
+        data_name (str): Name of the dataset used for fine-tuning.
+        num_epochs (int): Number of training epochs.
+        directory (str): Path to the 'Unmerged' models directory.
+
+    Returns:
+        Optional[str]: Path to the most recent matching folder, or None if not found.
+    """
+    model_name_base = model_name.split('/')[-1]
+    data_name = data_name.split('/')[-1].replace(".csv", "")
+    search_pattern = f"{model_name_base}_{data_name}_PRETRAINED_*_epochs_{num_epochs}"
+    search_path = os.path.join(directory, "Pretrained", search_pattern)
+
+    matching_folders = glob.glob(search_path)
+    print(f'Found {len(matching_folders)} Pretrained folders for {model_name_base} and {data_name}')
+    print(f'Searching for: {search_path}')
+
+    if matching_folders:
+        folders_with_timestamps = [(folder, extract_timestamp_from_folder(folder)) for folder in matching_folders]
+        valid_folders = [(folder, ts) for folder, ts in folders_with_timestamps if ts is not None]
+
+        if valid_folders:
+            valid_folders.sort(key=lambda x: x[1], reverse=True)
+            newest_folder = valid_folders[0][0]
+            print(f"Found newest pretrained model folder: {newest_folder}")
+            return newest_folder
+        else:
+            print("No valid timestamps found in unmerged folder names.")
+    return None
+
+
 
 def openai_workflow(args, filename1, filename2, filename):
     """
@@ -318,34 +360,51 @@ def openai_workflow(args, filename1, filename2, filename):
     watermark_detection_2.main(args)
 
 
-def check_and_fine_tune(args, model, data, use_existing_model):
+def check_if_model_exist_or_train(args, model, data, use_existing_model, train_mode, models_dir):
     new_model = None
-    if use_existing_model:
-        # Find the existing model folder
-        os.makedirs(models_dir, exist_ok=True)
-        new_model = find_existing_model_folder(model, data, num_epochs=1, directory=models_dir)
-        if new_model:
-            args.target_model = new_model
-            print(f"Using existing model folder: {new_model}")
-        else:
-            unmerged_model = find_existing_unmerged_model_folder(model, data, num_epochs=1, directory=models_dir)
-            if unmerged_model:
-                print(f"Using unmerged model folder: {unmerged_model}")
-                tokenizer = AutoTokenizer.from_pretrained(model)
-                new_model = QLora_finetune_LLM.merge_and_upload_model(model, unmerged_model, tokenizer=tokenizer)
-                if new_model:
-                    print(f"Successfully merged and uploaded model: {new_model}")
-                    args.target_model = new_model
-                else:
-                    print("Failed to merge and upload the model.")
+    if train_mode.lower() == "finetune" or train_mode.lower() == "qlora":
+        if use_existing_model:
+            # Find the existing model folder
+            new_model = find_existing_model_folder(model, data, num_epochs=1, directory=models_dir)
+            if new_model:
+                args.target_model = new_model
+                print(f"Using existing model folder: {new_model}")
             else:
-                print("No existing model found. Proceeding to fine-tune.")
-    if not new_model:
-        print("Start Fine-tuning the model", flush=True)
-        # Fine-tune the model
-        new_model = QLora_finetune_LLM.main(model, data, base_path=models_dir)
-        print("Finished Fine-tuning the model: ", new_model, flush=True)
-        args.target_model = new_model
+                unmerged_model = find_existing_unmerged_model_folder(model, data, num_epochs=1, directory=models_dir)
+                if unmerged_model:
+                    print(f"Using unmerged model folder: {unmerged_model}")
+                    tokenizer = AutoTokenizer.from_pretrained(model)
+                    new_model = QLora_finetune_LLM.merge_and_upload_model(model, unmerged_model, tokenizer=tokenizer)
+                    if new_model:
+                        print(f"Successfully merged and uploaded model: {new_model}")
+                        args.target_model = new_model
+                    else:
+                        print("Failed to merge and upload the model.")
+
+                else:
+                    print("No existing model found. Proceeding to fine-tune.")
+        if not new_model:
+            print("Start Fine-tuning the model", flush=True)
+            # Fine-tune the model
+            new_model = QLora_finetune_LLM.main(model, data, base_path=models_dir)
+            print("Finished Fine-tuning the model: ", new_model, flush=True)
+            args.target_model = new_model
+    elif train_mode == "pretrain":
+        if use_existing_model:
+            # Find the existing model folder
+            new_model = find_existing_Pretrained_model_folder(model, data, num_epochs=1, directory=models_dir)
+            if new_model:
+                args.target_model = new_model
+                print(f"Using existing model folder: {new_model}")
+            else:
+                print("No existing model found. Proceeding to pretrain.")
+        if not new_model:
+            new_model = pretrain_LLM.main(model, data, base_path=models_dir)
+            args.target_model = new_model
+    else:
+        new_model = model
+        print(f"Using existing model: {model}")
+
     return new_model
 
 
@@ -368,6 +427,7 @@ if __name__ == '__main__':
     args = Options()
     args = args.parser.parse_args()
     config = Config(args)
+    args.output_dir = config.data_dir
     print(f"Start watermarking the data with method: {args.method}", flush=True)
     watermark = None
     params = {}
@@ -377,23 +437,45 @@ if __name__ == '__main__':
     print(f"File saved to {filename1}, {filename2}")
     args.data = filename.replace(".csv", ".jsonl")
     use_existing_model = True if args.use_existing.lower() in ['all', 'model'] else False
-    model = args.target_model
-    if "gpt" in model.lower():
+    base_model = args.target_model
+    if "gpt" in base_model.lower():
         openai_workflow(args, filename1, filename2, filename)
         exit(0)
     data = filename1
     models_dir = os.path.join(config.data_dir, "Models")
-    if args.train_mode == "finetune":
-        new_model = check_and_fine_tune(args, model, data, use_existing_model)
-        args.target_model = new_model
-    elif args.train_mode == "pretrain":
-        new_model = pretrain_LLM.main(model, data, base_path=models_dir)
-        args.target_model = new_model
-    else:
-        new_model = model
-        print(f"Using existing model: {model}")
+    os.makedirs(models_dir, exist_ok=True)
+    # Check if the model exists or train a new one
+    new_model = check_if_model_exist_or_train(args, base_model, data, use_existing_model, args.train_mode, models_dir)
+    args.target_model = new_model
+
+    if args.post_training is not None and args.post_training.lower() != "none":
+        print("Start post-training the model")
+        # Post-training the model
+        if args.post_training.lower() == "triviaqa":
+            new_model = instruction_tuning.main("muscle-memory/trivia_llama_response", base_model, args.target_model, models_dir, train_mode=args.train_mode)
+            args.target_model = new_model
+        else:
+            if args.post_training.lower() == "bookmia":
+                args.split = 0
+            else:
+                args.split = 10000
+            filter = "Non-member" if args.post_training in ["BookMIA", "Arxiv"] else "all"
+            no_member_str = "no_member_" if args.post_training in ["BookMIA", "Arxiv"] else ""
+            split_str = f"split_{args.split}_" if args.split > 0 else ""
+            count_str = f"{config.count // 1000}k" if config.count >= 1000 else str(config.count)
+            output_file = os.path.join(config.data_dir, "Datasets") + f"/{args.post_training}_{no_member_str}original_all_data_{split_str}{count_str}.csv"
+            post_training_dataset = process_data.load_clea_data_as_texts(
+                mode=args.post_training, from_idx=0, count=config.count,
+                split=args.split, output_file=output_file, watermark=None, filter=filter, output_csv_path=output_file
+            )
+            print("Post-training dataset created: ", post_training_dataset)
+            print("Model: ", args.target_model)
+            new_model = check_if_model_exist_or_train(args, args.target_model, post_training_dataset, use_existing_model, args.train_mode, models_dir)
+            args.target_model = new_model
+            # print("Post-training dataset not implemented yet")
+
     # Use the fine-tuned model
     print("Start detection on the model", flush=True)
-    watermark_detection_2.main(args)
+    watermark_detection_2.main(model_path=args.target_model, data_path=args.data, output_dir=args.output_dir, mode=args.mode)
     print("Done", flush=True)
 

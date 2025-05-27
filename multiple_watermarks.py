@@ -2,7 +2,7 @@ import os
 
 from utils import process_data, QLora_finetune_LLM, pretrain_LLM
 from watermark_detection import watermark_detection_2
-from main import init_watermark, Config, check_and_fine_tune
+from main import init_watermark, Config, check_if_model_exist_or_train
 from options import Options
 
 
@@ -62,7 +62,7 @@ def load_and_split_data(config, args, method_names, watermark_functions, params)
     filename = config.build_filename(args, method_names, params)
 
     # Load and process the data
-    filename1, filename2 = procces_data.load_clean_data_and_split(
+    filename1, filename2 = process_data.load_clean_data_and_split(
         mode=args.mode, from_idx=0, count=config.count, key_name=args.key_name, split=args.split,
         output_file=filename, watermark=watermark_functions, filter=config.filter,
         watermark_non_member=args.watermark_non_member
@@ -106,17 +106,21 @@ if __name__ == '__main__':
     model = args.target_model
     data = filename1
     models_dir = os.path.join(config.data_dir, "Models")
-    if args.train_mode == "finetune":
-        new_model = check_and_fine_tune(args, model, data, use_existing_model)
-        args.target_model = new_model
-    elif args.train_mode == "pretrain":
-        new_model = pretrain_LLM.main(model, data, base_path=models_dir)
-        args.target_model = new_model
-    else:
-        new_model = model
-        print(f"Using existing model: {model}")
+    os.makedirs(models_dir, exist_ok=True)
+    # Check if the model exists or train a new one
+    new_model = check_if_model_exist_or_train(args, model, data, use_existing_model, args.train_mode, models_dir)
+
+    # if args.train_mode == "finetune":
+    #     new_model = check_and_fine_tune(args, model, data, use_existing_model)
+    #     args.target_model = new_model
+    # elif args.train_mode == "pretrain":
+    #     new_model = pretrain_LLM.main(model, data, base_path=models_dir)
+    #     args.target_model = new_model
+    # else:
+    #     new_model = model
+    #     print(f"Using existing model: {model}")
     # Use the fine-tuned model
     print("Start detection on the model", flush=True)
-    watermark_detection_2.main(args)
+    watermark_detection_2.main(model_path=args.target_model, data_path=args.data, output_dir=args.output_dir, mode=args.mode)
     print("Done", flush=True)
 

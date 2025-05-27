@@ -258,12 +258,15 @@ def write_to_csv_pred_min_k(data, filename):
             writer = csv.DictWriter(csvfile, fieldnames=headers)
             writer.writeheader()
             for row in data:
-                writer.writerow(row)
+                # Filter the row to only include keys in the headers
+                filtered_row = {key: row[key] for key in headers if key in row}
+                writer.writerow(filtered_row)
+                # writer.writerow(row)
     else:
         print("No data to write to CSV")
 
 
-def evaluate_and_save_results(scores_dict, data, dataset, folder, prefix=""):
+def evaluate_and_save_results(scores_dict, data, dataset, folder, prefix="", output_dir=None):
     """
     Evaluates prediction scores using standard metrics and saves the results.
 
@@ -273,6 +276,7 @@ def evaluate_and_save_results(scores_dict, data, dataset, folder, prefix=""):
         dataset (str): Name of the dataset (used in file naming).
         folder (str): Folder to save results under 'results/<dataset>/<folder>'.
         prefix (str, optional): Optional prefix for the output CSV file.
+        output_dir (str, optional): Optional output directory for saving results.
     """
     # scores_dict = convert_data_format(scores_dict)
     labels = [d['label'] for d in data]  # Ensure labels are binary
@@ -310,13 +314,15 @@ def evaluate_and_save_results(scores_dict, data, dataset, folder, prefix=""):
             "label": clean_labels,
             "pred": {method: clean_scores}
         })
-
-    save_root = f"results/{dataset}/{folder}"
+    if output_dir:
+        save_root = f"{output_dir}/results/{dataset}/{folder}"
+    else:
+        save_root = f"results/{dataset}/{folder}"
     if not os.path.exists(save_root):
         os.makedirs(save_root)
 
     # Create and save the combined ROC curve plot
-    create_combined_roc_curve_plot(roc_data, folder, title=dataset, prefix=prefix)
+    create_combined_roc_curve_plot(roc_data, save_root, title=dataset, prefix=prefix)
 
     df = pd.DataFrame(results)
     print(df)
@@ -372,13 +378,7 @@ def evaluate_like_min_k(csv_path, kind=''):
     # print(parts)
     dataset = parts[-3]
     folder = parts[-2]
-    folder = '/'.join(parts[:-1])
-    # prefix = parts[-1].split('.')[0]
-    # prefix = prefix.split('.')[0]
-    # prefix = prefix[5:len(prefix)-20]
-    # date_info = datetime.datetime.now().strftime("%Y_%m_%d_%H_%M_%S")
-    # new_prefix = f"{prefix}_{date_info}"
-    # print("new_prefix:", new_prefix)
+    output_dir = '/'.join(parts[:-4])
 
     # Load the CSV file
     df = pd.read_csv(csv_path)
@@ -393,4 +393,4 @@ def evaluate_like_min_k(csv_path, kind=''):
     scores_dict = {attack: df[attack].tolist() for attack in attacks}
 
     # Evaluate and save results
-    evaluate_and_save_results(scores_dict, [{'label': label} for label in labels], dataset, folder=folder, prefix=kind)
+    evaluate_and_save_results(scores_dict, [{'label': label} for label in labels], dataset, folder=folder, prefix=kind, output_dir=output_dir)

@@ -175,7 +175,7 @@ if __name__ == "__main__":
     #     rewritten = apply_model(original, model_name)
     #     score = similarity_to_root(rewritten, original)
     #     print(f"Model: {model_name}\nRewritten: {rewritten}\nSimilarity: {score:.4f}\n{'-'*40}")
-    history = converge_rephrasing(original, "gpt", threshold=0.98, max_iter=100)
-    groups = rephrase_and_group_by_similarity(original, "bart", max_iter=100, grouping_threshold=0.95)
+    # history = converge_rephrasing(original, "gpt", threshold=0.98, max_iter=100)
+    groups = rephrase_and_group_by_similarity(original, "gpt", max_iter=100, grouping_threshold=0.95)
 
 

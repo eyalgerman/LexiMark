@@ -101,6 +101,11 @@ def fine_tune_model(model_name, data_path, base_path, resume_from_checkpoint=Non
     # new model name
     new_model = f"{model_name.split('/')[-1]}_{data_name}_QLORA_{current_time}_epochs_{num_epochs}"
 
+    if len(new_model) > 255: # Ensure the model name is not too long for filesystem limits
+        short_data_name = "_".join(data_name.split("_")[:3])
+        current_time = datetime.now().strftime("%Y%m%d_%H%M")
+        new_model = f"{model_name.split('/')[-1]}_{short_data_name}_QLORA_{current_time}_epochs_{num_epochs}"
+
     # training_arguments = TrainingArguments(
     #     output_dir=f"{base_path}checkpoints/results_{new_model}",
     #     evaluation_strategy="epoch",
@@ -122,7 +127,8 @@ def fine_tune_model(model_name, data_path, base_path, resume_from_checkpoint=Non
     #     disable_tqdm=False  # Disables tqdm progress bars for both training and evaluation  -TO SHOW progress
     # )
     training_arguments = SFTConfig(
-        output_dir=f"{base_path}checkpoints/results_{new_model}",
+        # output_dir=f"{base_path}checkpoints/results_{new_model}",
+        output_dir=os.path.join(base_path, "checkpoints", f"{new_model}"),
         # evaluation_strategy="epoch",
         optim="paged_adamw_8bit",
         per_device_train_batch_size=2,
@@ -167,7 +173,8 @@ def fine_tune_model(model_name, data_path, base_path, resume_from_checkpoint=Non
     trainer.evaluate()
     trainer.train()
 
-    new_model_path = f"{base_path}Unmerged/{new_model}"
+    # new_model_path = f"{base_path}Unmerged/{new_model}"
+    new_model_path = os.path.join(base_path, "Unmerged", new_model)
     trainer.model.save_pretrained(new_model_path)
     return new_model_path, tokenizer
 

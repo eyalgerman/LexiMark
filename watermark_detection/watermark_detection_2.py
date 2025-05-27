@@ -1,25 +1,19 @@
-import json
 import logging
 import datetime
 import os
 import numpy as np
-# import openai
-import pandas as pd
-# from openai import OpenAI
-import tiktoken
 from tqdm import tqdm
 
-from . import eval_2
 from utils import process_data
-from watermarks.basic_watermark import bottom_k_entropy_words
-from utils.create_map_entropy_both import create_entropy_map, create_line_to_top_words_map
+from watermark_detection import eval_2
+from watermark_detection.eval_2 import load_jsonl
+from utils.create_map_entropy_both import create_entropy_map, create_line_to_top_words_map, bottom_k_entropy_words
 logging.basicConfig(level='ERROR')
 from pathlib import Path
 import torch
 import zlib
 from transformers import AutoTokenizer, AutoModelForCausalLM
-from options import Options, config_instance
-# from .eval import *
+from options import Options
 import torch.nn.functional as F
 import spacy
 
@@ -27,18 +21,10 @@ MAX_LEN_LINE_GENERATE = 40
 MIN_LEN_LINE_GENERATE = 7
 MAX_LEN_LINE = 10000
 TOP_K_ENTROPY = 2
+MAX_FOLDER_LEN = 255
 
 
 def load_model(name1):
-    """
-    Loads a model and tokenizer from Hugging Face if it's not an OpenAI model.
-
-    Args:
-        name1 (str): Name or path of the model.
-
-    Returns:
-        Tuple[transformers.PreTrainedModel, transformers.PreTrainedTokenizer] or (None, None)
-    """
     if "davinci" in name1:
         model1 = None
         tokenizer1 = None
@@ -50,19 +36,9 @@ def load_model(name1):
 
 
 def load_local_model(name1):
-    """
-    Loads a local or OpenAI model along with its tokenizer.
-
-    Args:
-        name1 (str): Model name or path. If it's an OpenAI model, loads with tiktoken.
-
-    Returns:
-        Tuple[Union[str, transformers.PreTrainedModel], Union[tiktoken.Encoding, transformers.PreTrainedTokenizer]]:
-            Model and tokenizer.
-    """
-    if "davinci" in name1 or "gpt" in name1:
-        model1 = name1
-        tokenizer1 = tiktoken.encoding_for_model("gpt-4o-mini-2024-07-18")
+    if "davinci" in name1:
+        model1 = None
+        tokenizer1 = None
     else:
         model1 = AutoModelForCausalLM.from_pretrained(Path(name1), return_dict=True, device_map='auto')
         model1.eval()
@@ -73,25 +49,21 @@ def load_local_model(name1):
 
 def calculate_perplexity(sentence, model, tokenizer, gpu):
     """
-    Computes the perplexity of a sentence using a Hugging Face model.
+    Calculates the perplexity and log-probabilities for a given sentence.
 
     Args:
-        sentence (str): Input sentence.
-        model (PreTrainedModel): Loaded language model.
-        tokenizer (PreTrainedTokenizer): Tokenizer corresponding to the model.
-        gpu (str): Device to run the model on (e.g., 'cuda').
+        sentence (str): Input sentence to evaluate.
+        model (transformers.PreTrainedModel): The language model.
+        tokenizer (transformers.PreTrainedTokenizer): The tokenizer for the model.
+        gpu (torch.device): Device to run computation on.
 
     Returns:
         Tuple[float, List[float], float, torch.Tensor, torch.Tensor]:
-            Perplexity, token probabilities, loss, logits, and input ids.
+        Perplexity, list of log probabilities, loss, logits, and processed input token IDs.
+
+    Raises:
+        RuntimeError: If inference fails due to input length or model errors.
     """
-
-    # Check if openai model
-    if isinstance(model, str) and "gpt" in model:
-        # Use OpenAI API for perplexity calculation
-        return calculate_perplexity_openai(sentence, model_name=model)
-
-
     input_ids = torch.tensor(tokenizer.encode(sentence)).unsqueeze(0)
     input_ids = input_ids.to(gpu)
     try:
@@ -99,10 +71,13 @@ def calculate_perplexity(sentence, model, tokenizer, gpu):
             outputs = model(input_ids, labels=input_ids)
         loss, logits = outputs[:2]
 
+        # Move to CPU immediately
+        logits = logits.detach().cpu()
+
         # Apply softmax to the logits to get probabilities
         probabilities = torch.nn.functional.log_softmax(logits, dim=-1)
         all_prob = []
-        input_ids_processed = input_ids[0][1:]
+        input_ids_processed = input_ids[0][1:].cpu()
         for i, token_id in enumerate(input_ids_processed):
             probability = probabilities[0, i, token_id].item()
             all_prob.append(probability)
@@ -112,112 +87,23 @@ def calculate_perplexity(sentence, model, tokenizer, gpu):
         print("Length of sentence: ", len(sentence))
         raise e
 
-        # if "out of memory" in str(e):
-        #     print("CUDA out of memory. Trying to free up memory...")
-        #     torch.cuda.empty_cache()
-        #     # Optionally, reduce any model or input sizes here if possible.
-        # else:
-        #     raise e  # Re-raise the exception if it is not a memory error.
-
-
-def calculate_perplexity_openai(prompt, model_name="text-davinci-003"):
-    """
-    Calculates perplexity using an OpenAI model with logprobs enabled.
-
-    Args:
-        prompt (str): Input text prompt.
-        model_name (str): Name of the OpenAI model.
-
-    Returns:
-        Tuple[float, List[float], float, torch.Tensor, List[str]]:
-            Perplexity, valid logprobs, mean logprob, raw logit tensor, token list.
-    """
-    print("Not working...")
-    return None, None, None, None, None
-    # Clean out any null characters that might cause prompt issues
-    prompt = prompt.replace('\x00', '')
-
-    # Load API key from config.json
-    # with open("config.json", "r") as file:
-    #     config = json.load(file)
-    openai.api_key = config_instance.api_key
-    client = OpenAI(
-        api_key=config_instance.api_key
-    )
-
-    try:
-        # Request logprobs from an OpenAI model that supports them
-        response = client.chat.completions.create(
-            model=model_name,  # Use the provided model name
-            # prompt=prompt,
-            messages=[
-                {
-                    "role": "user",
-                    "content": prompt
-                }
-            ],
-            max_tokens=1,  # No additional tokens needed, just echo the prompt
-            temperature=1.0,
-            logprobs=True,  # Request top-5 logprobs
-            top_logprobs=5,
-            # echo=True  # Echo back the prompt so we get logprobs for it
-        )
-    except Exception as e:
-        error_message = str(e)
-        # Check if content filter triggered or other error
-        if 'content_filter' in error_message.lower():
-            print("Content filter triggered. Please modify the prompt.")
-            return None, None, None, None, None
-        else:
-            print(f"An error occurred: {error_message}")
-            return None, None, None, None, None
-
-    # Extract the first choice
-    choice = response.choices[0]
-
-    # Extract token logprobs and tokens from structured object
-    token_logprobs = [t.logprob for t in choice.logprobs.content]
-    tokens = [t.token for t in choice.logprobs.content]
-
-    # Filter out None values
-    valid_logprobs = [lp for lp in token_logprobs if lp is not None]
-
-    if not valid_logprobs:
-        print("No valid logprobs returned.")
-        return None, None, None, token_logprobs, tokens
-
-        # Calculate perplexity = exp(-mean(logprob))
-    perplexity = np.exp(-np.mean(valid_logprobs))
-
-    # Convert to tensor for softmax
-    logits_tensor = torch.tensor(valid_logprobs)
-    softmax_probs = F.softmax(logits_tensor, dim=-1)
-
-    return (
-        perplexity,
-        valid_logprobs,
-        np.mean(valid_logprobs),
-        logits_tensor,
-        tokens
-    )
-
 
 def inference(model1, tokenizer1, text, label, name, line_to_top_words_map, entropy_map, data_name=None):
     """
-    Performs inference and computes watermark-related metrics for a single example.
+    Runs a detailed statistical analysis of a text input to assess MIA indicators.
 
     Args:
-        model1: Model or model name.
-        tokenizer1: Tokenizer object.
-        text (str): Input text to analyze.
-        label (int): Ground truth label.
-        name (str): Identifier or filename for the text.
-        line_to_top_words_map (dict): Map from line number to top-entropy words.
-        entropy_map (dict): Precomputed entropy values for words.
-        data_name (str, optional): Optional dataset name.
+        model1 (transformers.PreTrainedModel): The loaded model for inference.
+        tokenizer1 (transformers.PreTrainedTokenizer): Corresponding tokenizer.
+        text (str): The input text to evaluate.
+        label (int): Label associated with the input (e.g., member or non-member).
+        name (str): Identifier or file name for the input.
+        line_to_top_words_map (dict): Map of line number to top entropy words.
+        entropy_map (dict): Map of token entropies across the dataset.
+        data_name (str, optional): Optional name of the dataset.
 
     Returns:
-        dict: A dictionary containing various metrics and results.
+        dict: Dictionary of computed metrics and probabilities for the input.
     """
     pred = {}
     pred["FILE_PATH"] = name
@@ -225,204 +111,195 @@ def inference(model1, tokenizer1, text, label, name, line_to_top_words_map, entr
     if data_name:
         pred["data_name"] = data_name
 
-    # Check if openai model
-    if isinstance(model1, str) and "gpt" in model1:
-        # Use OpenAI API for perplexity calculation
-        p1, all_prob, p1_likelihood, logits, input_ids_processed = calculate_perplexity_openai(text, model_name=model1)
-        p_lower, all_prob_lower, p_lower_likelihood, logits_lower, input_ids_processed_lower = calculate_perplexity_openai(text.lower(), model_name=model1)
-    else:
+    # clean up memory
+    torch.cuda.empty_cache()
+    torch.cuda.ipc_collect()
+
+    with torch.no_grad():
         p1, all_prob, p1_likelihood, logits, input_ids_processed = calculate_perplexity(text, model1, tokenizer1, gpu=model1.device)
         p_lower, all_prob_lower, p_lower_likelihood, logits_lower, input_ids_processed_lower = calculate_perplexity(text.lower(), model1, tokenizer1, gpu=model1.device)
 
-    # ppl
-    pred["ppl"] = p1
+        # ppl
+        pred["ppl"] = p1
 
-    # Ratio of log ppl of lower-case and normal-case
-    pred["ppl_lowercase_ppl"] = -(np.log(p_lower) / np.log(p1)).item()
-    # Ratio of log ppl of large and zlib
-    zlib_entropy = len(zlib.compress(bytes(text, 'utf-8')))
-    pred["ppl_zlib"] = np.log(p1) / zlib_entropy
+        # Ratio of log ppl of lower-case and normal-case
+        pred["ppl_lowercase_ppl"] = -(np.log(p_lower) / np.log(p1)).item()
+        # Ratio of log ppl of large and zlib
+        zlib_entropy = len(zlib.compress(bytes(text, 'utf-8')))
+        pred["ppl_zlib"] = np.log(p1) / zlib_entropy
 
-    # min-k prob
-    for ratio in [0.1, 0.2, 0.3]:
-        k_length = int(len(all_prob) * ratio)
-        topk_prob = np.sort(all_prob)[:k_length]
-        pred[f"Min_{ratio * 100}% Prob"] = -np.mean(topk_prob).item()
+        # min-k prob
+        for ratio in [0.1, 0.2, 0.3]:
+            k_length = int(len(all_prob) * ratio)
+            topk_prob = np.sort(all_prob)[:k_length]
+            pred[f"Min_{ratio * 100}% Prob"] = -np.mean(topk_prob).item()
 
-    # max-k prob
-    for ratio in [0.1, 0.2, 0.3]:
-        k_length = int(len(all_prob) * ratio)
-        topk_prob = np.sort(all_prob)[-k_length:]
-        pred[f"Max_{ratio * 100}% Prob"] = -np.mean(topk_prob).item()
+        # max-k prob
+        for ratio in [0.1, 0.2, 0.3]:
+            k_length = int(len(all_prob) * ratio)
+            topk_prob = np.sort(all_prob)[-k_length:]
+            pred[f"Max_{ratio * 100}% Prob"] = -np.mean(topk_prob).item()
 
-    # Min-K++
-    if isinstance(model1, str) and "gpt" in model1:
-        # Use OpenAI API for perplexity calculation
-        input_ids = torch.tensor(tokenizer1.encode(text)).unsqueeze(0)
-    else:
-
+        # Min-K++
         input_ids = torch.tensor(tokenizer1.encode(text)).unsqueeze(0).to(model1.device)
-    input_ids = input_ids[0][1:].unsqueeze(-1)
-    probs = F.softmax(logits[0, :-1], dim=-1)
-    log_probs = F.log_softmax(logits[0, :-1], dim=-1)
-    token_log_probs = log_probs.gather(dim=-1, index=input_ids).squeeze(-1)
-    mu = (probs * log_probs).sum(-1)
-    sigma = (probs * torch.square(log_probs)).sum(-1) - torch.square(mu)
+        input_ids = input_ids[0][1:].unsqueeze(-1)
+        probs = F.softmax(logits[0, :-1], dim=-1)
+        log_probs = F.log_softmax(logits[0, :-1], dim=-1)
 
-    ## mink++
-    mink_plus = (token_log_probs - mu) / sigma.sqrt()
-    for ratio in [0.1, 0.2, 0.3]:
-        k_length = int(len(mink_plus) * ratio)
-        topk = np.sort(mink_plus.cpu())[:k_length]
-        pred[f"MinK++_{ratio * 100}% Prob"] = np.mean(topk).item()
+        input_ids = input_ids.cpu() # Now all on CPU
+        token_log_probs = log_probs.gather(dim=-1, index=input_ids).squeeze(-1)
+        mu = (probs * log_probs).sum(-1)
+        sigma = (probs * torch.square(log_probs)).sum(-1) - torch.square(mu)
+        # move to cpu
+        mu = mu.detach().cpu()
+        sigma = sigma.detach().cpu()
+        token_log_probs = token_log_probs.detach().cpu()
+        ## mink++
+        mink_plus = (token_log_probs - mu) / sigma.sqrt()
+        for ratio in [0.1, 0.2, 0.3]:
+            k_length = int(len(mink_plus) * ratio)
+            topk = np.sort(mink_plus.cpu())[:k_length]
+            pred[f"MinK++_{ratio * 100}% Prob"] = np.mean(topk).item()
 
+        tokens = tokenizer1.tokenize(text)
+        concatenated_tokens = "".join(token for token in tokens)
+        mink_plus = mink_plus.cpu()
+        torch.cuda.empty_cache()
 
-    tokens = tokenizer1.tokenize(text)
-    concatenated_tokens = "".join(token for token in tokens)
+        # Define the values of k you want to iterate over
+        k_values = range(1, 10) # all k from 1 to 9 inclusive
 
-    mink_plus = mink_plus.cpu()
+        # Create a list of bottom k words once
+        all_bottom_k_words = {}
 
-    # Define the values of k you want to iterate over
-    k_values = range(1, 10) # all k from 1 to 9 inclusive
+        for line_num, top_words in line_to_top_words_map.items():
+            bottom_k_words = bottom_k_entropy_words(" ".join(top_words), entropy_map, max(k_values))
+            all_bottom_k_words[line_num] = bottom_k_words
 
-    # Create a list of bottom k words once
-    all_bottom_k_words = {}
+        # Intermediate storage for results
+        intermediate_results = {
+            "relevant_log_probs": [],
+            "relevant_log_probs_zlib": [],
+            "relevant_log_probs_kpp": [],
+            "relevant_log_probs_one_token": [],
+            "relevant_log_probs_one_token_kpp": [],
+            "relevant_indexes": []
+        }
 
-    for line_num, top_words in line_to_top_words_map.items():
-        bottom_k_words = bottom_k_entropy_words(" ".join(top_words), entropy_map, max(k_values))
-        all_bottom_k_words[line_num] = bottom_k_words
+        # Process bottom k words once, ensuring lowest to highest entropy processing
+        for line_num, bottom_k_words in all_bottom_k_words.items():
+            for i, word in enumerate(bottom_k_words):
+                if word in concatenated_tokens:
+                    start_index = concatenated_tokens.find(word)
+                    end_index = start_index + len(word)
+                    start_token_index = end_token_index = None
+                    current_length = 0
+                    for j, token in enumerate(tokens):
+                        current_length += len(token)
+                        if current_length > start_index and start_token_index is None:
+                            start_token_index = j
+                        if current_length >= end_index:
+                            end_token_index = j
+                            break
+                    if start_token_index is not None and end_token_index is not None:
+                        if start_token_index < len(all_prob):
+                            intermediate_results["relevant_log_probs_one_token"].append((i, all_prob[start_token_index]))
+                            intermediate_results["relevant_log_probs_one_token_kpp"].append((i, mink_plus[start_token_index]))
+                        for idx in range(start_token_index, end_token_index + 1):
+                            if idx < len(all_prob):
+                                intermediate_results["relevant_log_probs"].append((i, all_prob[idx]))
+                                if zlib_entropy != 0:
+                                    intermediate_results["relevant_log_probs_zlib"].append(
+                                        (i, np.log(abs(all_prob[idx])) / zlib_entropy))
+                                intermediate_results["relevant_log_probs_kpp"].append((i, mink_plus[idx]))
+                                intermediate_results["relevant_indexes"].append((i, idx))
 
-    # Intermediate storage for results
-    intermediate_results = {
-        "relevant_log_probs": [],
-        "relevant_log_probs_zlib": [],
-        "relevant_log_probs_kpp": [],
-        "relevant_log_probs_one_token": [],
-        "relevant_log_probs_one_token_kpp": [],
-        "relevant_indexes": []
-    }
+        # Calculate and store results for each k value
+        for k in k_values:
+            relevant_log_probs = [val for i, val in intermediate_results["relevant_log_probs"] if i < k]
+            relevant_log_probs_zlib = [val for i, val in intermediate_results["relevant_log_probs_zlib"] if i < k]
+            relevant_log_probs_kpp = [val for i, val in intermediate_results["relevant_log_probs_kpp"] if i < k]
+            relevant_log_probs_one_token = [val for i, val in intermediate_results["relevant_log_probs_one_token"] if i < k]
+            relevant_log_probs_one_token_kpp = [val for i, val in intermediate_results["relevant_log_probs_one_token_kpp"]
+                                                if i < k]
 
-    # Process bottom k words once, ensuring lowest to highest entropy processing
-    for line_num, bottom_k_words in all_bottom_k_words.items():
-        for i, word in enumerate(bottom_k_words):
-            if word in concatenated_tokens:
-                start_index = concatenated_tokens.find(word)
-                end_index = start_index + len(word)
-                start_token_index = end_token_index = None
-                current_length = 0
-                for j, token in enumerate(tokens):
-                    current_length += len(token)
-                    if current_length > start_index and start_token_index is None:
-                        start_token_index = j
-                    if current_length >= end_index:
-                        end_token_index = j
-                        break
-                if start_token_index is not None and end_token_index is not None:
-                    if start_token_index < len(all_prob):
-                        intermediate_results["relevant_log_probs_one_token"].append((i, all_prob[start_token_index]))
-                        intermediate_results["relevant_log_probs_one_token_kpp"].append((i, mink_plus[start_token_index]))
-                    for idx in range(start_token_index, end_token_index + 1):
-                        if idx < len(all_prob):
-                            intermediate_results["relevant_log_probs"].append((i, all_prob[idx]))
-                            if zlib_entropy != 0:
-                                intermediate_results["relevant_log_probs_zlib"].append(
-                                    (i, np.log(abs(all_prob[idx])) / zlib_entropy))
-                            intermediate_results["relevant_log_probs_kpp"].append((i, mink_plus[idx]))
-                            intermediate_results["relevant_indexes"].append((i, idx))
+            if relevant_log_probs:
+                sentence_log_likelihood = np.mean(relevant_log_probs)
+                pred[f"sentence_entropy_log_likelihood_k={k}"] = sentence_log_likelihood
 
-    # Calculate and store results for each k value
-    for k in k_values:
-        relevant_log_probs = [val for i, val in intermediate_results["relevant_log_probs"] if i < k]
-        relevant_log_probs_zlib = [val for i, val in intermediate_results["relevant_log_probs_zlib"] if i < k]
-        relevant_log_probs_kpp = [val for i, val in intermediate_results["relevant_log_probs_kpp"] if i < k]
-        relevant_log_probs_one_token = [val for i, val in intermediate_results["relevant_log_probs_one_token"] if i < k]
-        relevant_log_probs_one_token_kpp = [val for i, val in intermediate_results["relevant_log_probs_one_token_kpp"]
-                                            if i < k]
+            if relevant_log_probs_zlib:
+                sentence_log_likelihood_zlib = np.mean(relevant_log_probs_zlib)
+                pred[f"sentence_entropy_log_likelihood_zlib_k={k}"] = sentence_log_likelihood_zlib
 
-        if relevant_log_probs:
-            sentence_log_likelihood = np.mean(relevant_log_probs)
-            pred[f"sentence_entropy_log_likelihood_k={k}"] = sentence_log_likelihood
+            if relevant_log_probs_kpp:
+                sentence_log_likelihood_kpp = np.mean(relevant_log_probs_kpp)
+                pred[f"sentence_entropy_log_likelihood_kpp_k={k}"] = sentence_log_likelihood_kpp
 
-        if relevant_log_probs_zlib:
-            sentence_log_likelihood_zlib = np.mean(relevant_log_probs_zlib)
-            pred[f"sentence_entropy_log_likelihood_zlib_k={k}"] = sentence_log_likelihood_zlib
+            if relevant_log_probs_one_token:
+                sentence_log_probs_one_token = np.mean(relevant_log_probs_one_token)
+                pred[f"sentence_log_probs_one_token_k={k}"] = sentence_log_probs_one_token
 
-        if relevant_log_probs_kpp:
-            sentence_log_likelihood_kpp = np.mean(relevant_log_probs_kpp)
-            pred[f"sentence_entropy_log_likelihood_kpp_k={k}"] = sentence_log_likelihood_kpp
+            if relevant_log_probs_one_token_kpp:
+                sentence_log_probs_one_token_kpp = np.mean(relevant_log_probs_one_token_kpp)
+                pred[f"sentence_log_probs_one_token_k={k}"] = sentence_log_probs_one_token_kpp
 
-        if relevant_log_probs_one_token:
-            sentence_log_probs_one_token = np.mean(relevant_log_probs_one_token)
-            pred[f"sentence_log_probs_one_token_k={k}"] = sentence_log_probs_one_token
+        # Process lower case tokens and top words for all_prob_lower
+        tokens_lower = tokenizer1.tokenize(text.lower())
+        concatenated_tokens_lower = "".join(token for token in tokens_lower)
+        relevant_log_probs_lower = []
+        relevant_log_probs_zlib_lower = []
+        relevant_indexes_lower = []
+        # Process top words from all lines
+        for line_num, top_words in line_to_top_words_map.items():
+            # print(top_words)
+            for word in top_words:
+                word = word.lower()
+                if word in concatenated_tokens_lower:
+                    start_index = concatenated_tokens_lower.find(word)
+                    end_index = start_index + len(word)
+                    start_token_index = end_token_index = None
+                    current_length = 0
+                    for i, token in enumerate(tokens_lower):
+                        current_length += len(token)
+                        if current_length > start_index and start_token_index is None:
+                            start_token_index = i
+                        if current_length >= end_index:
+                            end_token_index = i
+                            break
+                    if start_token_index is not None and end_token_index is not None:
+                        for idx in range(start_token_index, end_token_index + 1):
+                            if idx < len(all_prob_lower):
+                                relevant_log_probs_lower.append(all_prob_lower[idx])
+                                if zlib != 0:
+                                    relevant_log_probs_zlib_lower.append(np.log(abs(all_prob_lower[idx])) / zlib_entropy)
+                                relevant_indexes_lower.append(idx)
 
-        if relevant_log_probs_one_token_kpp:
-            sentence_log_probs_one_token_kpp = np.mean(relevant_log_probs_one_token_kpp)
-            pred[f"sentence_log_probs_one_token_k={k}"] = sentence_log_probs_one_token_kpp
-
-        # first_k = False  # Set the flag to False after processing the first k value
-
-    # # Random Sampling of Words
-    # for k in k_values:
-    #     random_word_probs = random.sample(all_prob, k)
-    #     pred[f"random_words_mean_prob_k={k}"] = np.mean(random_word_probs)
-
-    # Process lower case tokens and top words for all_prob_lower
-    tokens_lower = tokenizer1.tokenize(text.lower())
-    concatenated_tokens_lower = "".join(token for token in tokens_lower)
-    relevant_log_probs_lower = []
-    relevant_log_probs_zlib_lower = []
-    relevant_indexes_lower = []
-    # Process top words from all lines
-    for line_num, top_words in line_to_top_words_map.items():
-        # print(top_words)
-        for word in top_words:
-            word = word.lower()
-            if word in concatenated_tokens_lower:
-                start_index = concatenated_tokens_lower.find(word)
-                end_index = start_index + len(word)
-                start_token_index = end_token_index = None
-                current_length = 0
-                for i, token in enumerate(tokens_lower):
-                    current_length += len(token)
-                    if current_length > start_index and start_token_index is None:
-                        start_token_index = i
-                    if current_length >= end_index:
-                        end_token_index = i
-                        break
-                if start_token_index is not None and end_token_index is not None:
-                    for idx in range(start_token_index, end_token_index + 1):
-                        if idx < len(all_prob_lower):
-                            relevant_log_probs_lower.append(all_prob_lower[idx])
-                            if zlib != 0:
-                                relevant_log_probs_zlib_lower.append(np.log(abs(all_prob_lower[idx])) / zlib_entropy)
-                            relevant_indexes_lower.append(idx)
-
-    if relevant_log_probs_lower:
-        sentence_log_likelihood_lower = np.mean(relevant_log_probs_lower)
-        pred["sentence_entropy_log_likelihood_lower"] = sentence_log_likelihood_lower
-    if relevant_log_probs_zlib_lower:
-        sentence_log_likelihood_zlib_lower = np.mean(relevant_log_probs_zlib_lower)
-        pred["sentence_entropy_log_likelihood_zlib_lower"] = sentence_log_likelihood_zlib_lower
+        if relevant_log_probs_lower:
+            sentence_log_likelihood_lower = np.mean(relevant_log_probs_lower)
+            pred["sentence_entropy_log_likelihood_lower"] = sentence_log_likelihood_lower
+        if relevant_log_probs_zlib_lower:
+            sentence_log_likelihood_zlib_lower = np.mean(relevant_log_probs_zlib_lower)
+            pred["sentence_entropy_log_likelihood_zlib_lower"] = sentence_log_likelihood_zlib_lower
 
     return pred
 
 
 def evaluate_data(test_data, model1, tokenizer1, col_name, modelname1, mode):
     """
-    Evaluates watermark-related metrics for a dataset.
+    Evaluates a dataset for watermark or MIA indicators using the specified model.
 
     Args:
-        test_data (List[dict]): Dataset entries containing input text and labels.
-        model1: Loaded model or model name.
-        tokenizer1: Corresponding tokenizer.
-        col_name (str): Name of the column containing text.
-        modelname1 (str): Identifier for the model.
-        mode (str): Dataset type or task mode (e.g., "Texts").
+        test_data (List[dict]): List of input records (e.g., from a `.jsonl` file).
+        model1 (transformers.PreTrainedModel): Model for inference.
+        tokenizer1 (transformers.PreTrainedTokenizer): Tokenizer for the model.
+        col_name (str): Key in the input dicts for text input (e.g., "input").
+        modelname1 (str): Name or path of the model used.
+        mode (str): Mode identifier (e.g., for entropy mapping).
 
     Returns:
-        List[dict]: List of prediction dictionaries for each sample.
+        List[dict]: List of dictionaries with computed MIA metrics per input.
     """
-    print(f"all data size: {len(test_data)}")
+    print(f"All data size: {len(test_data)}")
     print(f"mode: {mode}")
     all_output = []
     test_data = test_data
@@ -451,36 +328,46 @@ def evaluate_data(test_data, model1, tokenizer1, col_name, modelname1, mode):
     return all_output
 
 
-def main(args):
+def main(model_path, data_path, suffix = "", output_dir="", mode="Text"):
     """
-    Entry point for running watermark detection from CLI args.
+    Main function to run the watermark detection pipeline on a dataset.
 
-    Loads model and dataset, computes predictions and evaluation metrics, and saves results.
+    Loads model and data, computes metrics for MIA detection, and saves the results to disk.
 
     Args:
-        args (argparse.Namespace): Parsed command-line arguments.
+        model_path (str): Path to the fine-tuned or base model.
+        data_path (str): Path to the input `.jsonl` file.
+        suffix (str, optional): Optional suffix for result file naming.
+        output_dir (str, optional): Directory to save the output results.
+
+    Returns:
+        None
     """
-    # args.output_dir = f"{args.output_dir}/{args.target_model.rstrip('/').split('/')[-1]}_{args.target_model.rstrip('/').split('/')[-1]}/{args.key_name}"
-    # Path(args.output_dir).mkdir(parents=True, exist_ok=True)
     print("Start watermark detection")
-    print(f"Target model: {args.target_model}")
-    print(f"Data: {args.data}")
+    print(f"Target model: {model_path}")
+    print(f"Data: {data_path}")
     # load model and data
-    model1, tokenizer1 = load_local_model(args.target_model)
-    if "jsonl" in args.data:
-        data = eval_2.load_jsonl(f"{args.data}")
+    model, tokenizer = load_local_model(model_path)
+    if "jsonl" in data_path:
+        data = load_jsonl(f"{data_path}")
     else:  # load data from huggingface
         dataset = process_data.load_data(mode=args.mode)
         data = eval_2.convert_huggingface_data_to_list_dic(dataset)
         data = data[0]
-    args.key_name = "input"
-    all_output = evaluate_data(data, model1, tokenizer1, args.key_name, args.target_model, args.mode)
-    dataset = args.data.rstrip('/').split('/')[-1].split('.')[0]
-    model = args.target_model.rstrip('/').split('/')[-1]
+    all_output = evaluate_data(data, model, tokenizer, "input", model_path, mode)
+    # dataset = data_path.rstrip('/').split('/')[-2]
+    dataset = os.path.basename(data_path).split(".")[0]
+    print(f"Dataset: {dataset}")
+    model = model_path.rstrip('/').split('/')[-1]
     current_time = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     kind = f"E=MIA_detection"
     folder = f"M={model}_{current_time}"
-    result_folder = f"{args.output_dir}/{dataset}/{folder}"
+    if len(folder) > MAX_FOLDER_LEN:
+        print("Folder name is too long, truncating to fit filesystem limits.")
+        print(f"Original folder name: {folder} (length: {len(folder)})")
+        folder = folder[:MAX_FOLDER_LEN]
+        print(f"Folder after truncating: {folder}, length: {len(folder)}")
+    result_folder = f"{output_dir}/results/{dataset}/{folder}"
     os.makedirs(result_folder, exist_ok=True)
     file_preds = f"{result_folder}/preds_{kind}.csv"
     eval_2.write_to_csv_pred_min_k(all_output, file_preds)
@@ -488,51 +375,7 @@ def main(args):
     eval_2.evaluate_like_min_k(file_preds, kind=kind)
 
 
-def main2(target_model, data, output_dir, mode="Texts"):
-    """
-    Programmatic entry point for running watermark detection and returning metrics.
-
-    Args:
-        target_model (str): Name or path of the model to evaluate.
-        data (str): Path to JSONL data or dataset name.
-        output_dir (str): Directory where results will be saved.
-        mode (str): Dataset type or mode. Defaults to "Texts".
-
-    Returns:
-        pandas.DataFrame: DataFrame containing evaluated metrics.
-    """
-    print("Start watermark detection")
-    print(f"Target model: {target_model}")
-    # load model and data
-    model1, tokenizer1 = load_local_model(target_model)
-    if "jsonl" in data:
-        data = eval_2.load_jsonl(f"{data}")
-    elif isinstance(data, list):
-        data = data
-    else:  # load data from huggingface
-        dataset = process_data.load_data(mode=mode)
-        data = eval_2.convert_huggingface_data_to_list_dic(dataset)
-        data = data[0]
-    all_output = evaluate_data(data, model1, tokenizer1, "input", target_model, mode)
-    dataset = "results"
-    model = target_model.rstrip('/').split('/')[-1]
-    current_time = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-    kind = f"E=MIA_detection"
-    folder = f"M={model}_{current_time}"
-    result_folder = f"{output_dir}/{dataset}/{folder}"
-
-    os.makedirs(result_folder, exist_ok=True)
-    file_preds = f"{result_folder}/preds_{kind}.csv"
-    eval_2.write_to_csv_pred_min_k(all_output, file_preds)
-    print(f"Results preds saved to {file_preds}")
-    # eval_2.evaluate_like_min_k(file_preds, kind=kind)
-    # metrics_file = f"{result_folder}/metrics_{kind}.csv"
-    # metrics_df = pd.read_csv(metrics_file)
-    preds_df = pd.read_csv(file_preds)
-    return preds_df
-
-
 if __name__ == '__main__':
     args = Options()
     args = args.parser.parse_args()
-    main(args)
+    main(args.target_model, args.data, "", output_dir="results")

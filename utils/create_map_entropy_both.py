@@ -102,9 +102,13 @@ def create_entropy_map(data_sources, mode='Books'):
                     words = text.split()
                     word_counts.update(words)
         else:
-            raise ValueError(f"Unsupported mode: {mode}")
+            raise ValueError(f"Unsupported data_sources format: {type(data_sources)}. Expected str, dict, or list.")
     else:
-        raise ValueError(f"Unsupported mode: {mode}")
+        for sentence in data_sources:
+            if isinstance(sentence, dict):
+                sentence = sentence['input']
+            words = sentence.split()
+            word_counts.update(words)
 
     total_words = sum(word_counts.values())
     # Generate the entropy map using word frequency

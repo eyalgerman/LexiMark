@@ -122,14 +122,6 @@ def load_data(mode='Books', folder1="None", folder2="None", from_idx=0, to_idx=N
     return data_sources
 
 
-# def split_texts_into_sentences(texts):
-#     sentences = []
-#     for text in texts:
-#         split_sentences = nltk.sent_tokenize(text)
-#         sentences.extend(split_sentences)
-#     return sentences
-
-
 def split_texts_into_sentences(texts, max_len=2000):
     sentences = []
 
@@ -178,30 +170,6 @@ def filter_valid_english_sentences(sentences):
             # If language detection fails, skip the sentence
             continue
     return valid_sentences
-
-
-# def load_and_clean_data(mode='Books', folder1="None", folder2="None", from_idx=0, to_idx=None, output_file=None, watermark=None, key_name='snippet', filter=None, ):
-#     if filter == "Non-member":
-#         datasets = load_data_not_member(mode=mode, from_idx=from_idx, count=to_idx-from_idx)
-#     else:
-#         datasets = load_data(mode=mode, from_idx=from_idx, to_idx=to_idx)
-#     print("datasets loaded:",  len(datasets))
-#     # dataset = dataset[0]
-#     for dataset in datasets:
-#         print("dataset loaded:", len(dataset))
-#         sentences = [item[key_name] for item in dataset]
-#         watermark_sentences = []
-#         print("sentences loaded:", len(sentences))
-#         if watermark:
-#             watermark_sentences += watermark(sentences)
-#         else:
-#             watermark_sentences += sentences
-#     # watermark_sentences_split = split_texts_into_sentences(watermark_sentences)
-#     watermark_sentences_valid = filter_valid_english_sentences(watermark_sentences)
-#     if output_file:
-#         procces_csv.write_sentences_to_csv(watermark_sentences_valid,
-#                                            file_name=output_file)
-#     return watermark_sentences_valid
 
 
 def watermark_and_split_data(sentences, watermark=None, split=False, watermark_non_member=True):
@@ -258,6 +226,7 @@ key_name_dict = {
 
 
 def load_clean_data_and_split(mode='Books', folder1="None", folder2="None", from_idx=0, count=1000, output_file=None, watermark=None, key_name='snippet', filter=None, split=False, watermark_non_member=True):
+    key_name = key_name_dict.get(mode, "text")
     if mode == 'PILE':
         return process_data_the_pile(from_idx=from_idx, count=count, output_file=output_file, watermark=watermark, key_name=key_name, filter=filter, split=split, watermark_non_member=watermark_non_member)
     if filter == "Non-member":
@@ -329,3 +298,33 @@ def process_data_the_pile(from_idx=0, count=1000, output_file=None, watermark=No
         # output_file_non_member = procces_csv.keep_first_column(output_file_non_member)
         return output_file_member, output_file_non_member
     return watermark_sentences_member, watermark_sentences_non_member
+
+
+def load_clea_data_as_texts(mode="BookMIA", from_idx=0, count=1000, output_file=None, watermark=None, filter=None, split=False, watermark_non_member=True, output_csv_path=None):
+    key_name = key_name_dict.get(mode, "text")
+    if mode == 'PILE':
+        return process_data_the_pile(from_idx=from_idx, count=count, output_file=output_file, watermark=watermark,
+                                     key_name=key_name, filter=filter, split=split,
+                                     watermark_non_member=watermark_non_member)
+    if filter == "Non-member":
+        datasets = load_data_not_member(mode=mode, from_idx=from_idx, count=count)
+    else:
+        datasets = load_data(mode=mode, from_idx=from_idx, to_idx=from_idx + count)
+    print("datasets loaded:", len(datasets))
+    # dataset = dataset[0]
+    # key_name = key_name_dict[mode]
+    sentences = []
+    for dataset in datasets:
+        sentences_dataset = [item[key_name] for item in dataset]
+        sentences.extend(sentences_dataset)
+        # watermark_sentences = []
+        print("sentences loaded:", len(sentences))
+    watermark_sentences_member, watermark_sentences_non_member = watermark_and_split_data(sentences, watermark=watermark,
+                                                                                          split=split,
+                                                                                          watermark_non_member=watermark_non_member)
+    watermark_sentences = watermark_sentences_member + watermark_sentences_non_member
+    if output_csv_path:
+        process_csv.write_sentences_to_csv(watermark_sentences, file_name=output_csv_path)
+        return output_csv_path
+
+    return watermark_sentences
