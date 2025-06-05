@@ -1,17 +1,19 @@
+import io
 import os
 from typing import Union
 import docx
 import fitz  # PyMuPDF
-# import io
+from pyarrow import BufferReader
 
-def extract_text_from_file(file: Union[str, bytes]) -> str:
+
+def extract_text_from_file(file: Union[io.BufferedReader, str]) -> str:
     """
     Extracts text content from a file of supported formats: .txt, .docx, or .pdf.
 
     The function reads the file and returns its full textual content based on the file type.
 
     Args:
-        file (Union[str, bytes]): A file-like object (e.g., from `open(..., 'rb')`) representing the input file.
+        file (Union[io.BufferedReader, str]): A file-like object or a string path to the file.
 
     Returns:
         str: Extracted text from the file. Returns a message if the file type is unsupported.
@@ -24,8 +26,14 @@ def extract_text_from_file(file: Union[str, bytes]) -> str:
     Note:
         The function assumes `file` has a `.name` attribute for extension detection.
     """
+    # If file is a path string, open it as binary
+    if isinstance(file, str):
+        name = file.lower()
+        with open(file, "rb") as f:
+            return extract_text_from_file(f)
+    if not hasattr(file, 'name'):
+        raise ValueError("The provided file-like object must have a 'name' attribute.")
     name = file.name.lower()
-
     if name.endswith(".txt"):
         return file.read().decode("utf-8")
 
@@ -43,6 +51,7 @@ def extract_text_from_file(file: Union[str, bytes]) -> str:
 
     return "Unsupported file format."
 
+
 def extract_texts_from_folder(folder_path: str) -> dict:
     """
     Extracts text content from all supported files in a specified folder.
@@ -56,6 +65,9 @@ def extract_texts_from_folder(folder_path: str) -> dict:
     Returns:
         dict: A dictionary where keys are filenames and values are the extracted text content.
     """
+    if not os.path.isdir(folder_path):
+        text = extract_text_from_file(folder_path)
+        return {os.path.basename(folder_path): text} if text else {}
     extracted_texts = {}
     for filename in os.listdir(folder_path):
         filepath = os.path.join(folder_path, filename)

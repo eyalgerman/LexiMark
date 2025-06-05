@@ -78,7 +78,7 @@ if __name__ == '__main__':
     args = args.parser.parse_args()
 
     # Initialize configuration
-    config = Config(args)
+    config = ConfigMulti(args)
 
     # List to store watermark methods and functions
     watermark_methods = args.watermarks

@@ -46,7 +46,11 @@ class Options:
 
         # Pretraining options
         self.parser.add_argument('--train_mode', type=str, default="finetune", help="the mode to use for training: pretrain, finetune, none")
+        self.parser.add_argument('--post_train_mode', type=str, default=None, help="the mode to use for post training: none, pretrain, finetune")
         self.parser.add_argument('--post_training', type=str, default=None, help="whether to do post training and in which mode/dataset")
+
+
+
 
 class Config:
     def __init__(self, args):

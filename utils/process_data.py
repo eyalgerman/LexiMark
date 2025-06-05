@@ -300,7 +300,7 @@ def process_data_the_pile(from_idx=0, count=1000, output_file=None, watermark=No
     return watermark_sentences_member, watermark_sentences_non_member
 
 
-def load_clea_data_as_texts(mode="BookMIA", from_idx=0, count=1000, output_file=None, watermark=None, filter=None, split=False, watermark_non_member=True, output_csv_path=None):
+def load_clean_data_as_texts(mode="BookMIA", from_idx=0, count=1000, output_file=None, watermark=None, filter=None, split=False, watermark_non_member=True, output_csv_path=None):
     key_name = key_name_dict.get(mode, "text")
     if mode == 'PILE':
         return process_data_the_pile(from_idx=from_idx, count=count, output_file=output_file, watermark=watermark,

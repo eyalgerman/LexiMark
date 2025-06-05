@@ -403,7 +403,7 @@ def check_if_model_exist_or_train(args, model, data, use_existing_model, train_m
             args.target_model = new_model
     else:
         new_model = model
-        print(f"Using existing model: {model}")
+        print(f"Using existing model without any training: {model}")
 
     return new_model
 
@@ -449,10 +449,16 @@ if __name__ == '__main__':
     args.target_model = new_model
 
     if args.post_training is not None and args.post_training.lower() != "none":
+        if args.post_train_mode is None or args.post_train_mode.lower() == "none":
+            args.post_train_mode = args.train_mode
         print("Start post-training the model")
         # Post-training the model
         if args.post_training.lower() == "triviaqa":
-            new_model = instruction_tuning.main("muscle-memory/trivia_llama_response", base_model, args.target_model, models_dir, train_mode=args.train_mode)
+            new_model = instruction_tuning.main("muscle-memory/trivia_llama_response", base_model, args.target_model, models_dir, train_mode=args.post_train_mode)
+            args.target_model = new_model
+        elif args.post_training.lower().endswith(".csv"):
+            post_training_dataset = args.post_training
+            new_model = check_if_model_exist_or_train(args, args.target_model, post_training_dataset, use_existing_model, args.post_train_mode, models_dir)
             args.target_model = new_model
         else:
             if args.post_training.lower() == "bookmia":
@@ -464,13 +470,13 @@ if __name__ == '__main__':
             split_str = f"split_{args.split}_" if args.split > 0 else ""
             count_str = f"{config.count // 1000}k" if config.count >= 1000 else str(config.count)
             output_file = os.path.join(config.data_dir, "Datasets") + f"/{args.post_training}_{no_member_str}original_all_data_{split_str}{count_str}.csv"
-            post_training_dataset = process_data.load_clea_data_as_texts(
+            post_training_dataset = process_data.load_clean_data_as_texts(
                 mode=args.post_training, from_idx=0, count=config.count,
                 split=args.split, output_file=output_file, watermark=None, filter=filter, output_csv_path=output_file
             )
             print("Post-training dataset created: ", post_training_dataset)
             print("Model: ", args.target_model)
-            new_model = check_if_model_exist_or_train(args, args.target_model, post_training_dataset, use_existing_model, args.train_mode, models_dir)
+            new_model = check_if_model_exist_or_train(args, args.target_model, post_training_dataset, use_existing_model, args.post_train_mode, models_dir)
             args.target_model = new_model
             # print("Post-training dataset not implemented yet")
 
