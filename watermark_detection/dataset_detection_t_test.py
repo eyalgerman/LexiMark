@@ -115,7 +115,7 @@ def perform_t_test_within_file(file_path, score_column, label_column="label"):
     return t_stat, p_value
 
 
-def perform_t_test_scores(scores_label_to_test, scores_label_non_member):
+def perform_t_test_scores(scores_label_to_test, scores_label_non_member, significance_level=SIGNIFICANCE_LEVEL):
     """
     Perform a T-test between two sets of scores.
     Args:
@@ -135,6 +135,6 @@ def perform_t_test_scores(scores_label_to_test, scores_label_non_member):
     # Perform the T-test
     t_stat, p_value = stats.ttest_ind(scores_label_to_test, scores_label_non_member, equal_var=False)
 
-    member = 1 if p_value < SIGNIFICANCE_LEVEL else 0
+    member = 1 if p_value < significance_level else 0
 
     return t_stat, p_value, member

@@ -3,7 +3,7 @@ import datetime
 import os
 import numpy as np
 from tqdm import tqdm
-
+import pandas as pd
 from utils import process_data
 from watermark_detection import eval_2
 from watermark_detection.eval_2 import load_jsonl
@@ -373,6 +373,50 @@ def main(model_path, data_path, suffix = "", output_dir="", mode="Text"):
     eval_2.write_to_csv_pred_min_k(all_output, file_preds)
     print(f"Results preds saved to {file_preds}")
     eval_2.evaluate_like_min_k(file_preds, kind=kind)
+
+
+def main2(target_model, data, output_dir, mode="Texts"):
+    """
+    Programmatic entry point for running watermark detection and returning metrics.
+
+    Args:
+        target_model (str): Name or path of the model to evaluate.
+        data (str): Path to JSONL data or dataset name.
+        output_dir (str): Directory where results will be saved.
+        mode (str): Dataset type or mode. Defaults to "Texts".
+
+    Returns:
+        pandas.DataFrame: DataFrame containing evaluated metrics.
+    """
+    print("Start watermark detection")
+    print(f"Target model: {target_model}")
+    # load model and data
+    model1, tokenizer1 = load_local_model(target_model)
+    if "jsonl" in data:
+        data = eval_2.load_jsonl(f"{data}")
+    elif isinstance(data, list):
+        data = data
+    else:  # load data from huggingface
+        dataset = process_data.load_data(mode=mode)
+        data = eval_2.convert_huggingface_data_to_list_dic(dataset)
+        data = data[0]
+    all_output = evaluate_data(data, model1, tokenizer1, "input", target_model, mode)
+    dataset = "results"
+    model = target_model.rstrip('/').split('/')[-1]
+    current_time = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    kind = f"E=MIA_detection"
+    folder = f"M={model}_{current_time}"
+    result_folder = f"{output_dir}/{dataset}/{folder}"
+
+    os.makedirs(result_folder, exist_ok=True)
+    file_preds = f"{result_folder}/preds_{kind}.csv"
+    eval_2.write_to_csv_pred_min_k(all_output, file_preds)
+    print(f"Results preds saved to {file_preds}")
+    # eval_2.evaluate_like_min_k(file_preds, kind=kind)
+    # metrics_file = f"{result_folder}/metrics_{kind}.csv"
+    # metrics_df = pd.read_csv(metrics_file)
+    preds_df = pd.read_csv(file_preds)
+    return preds_df
 
 
 if __name__ == '__main__':

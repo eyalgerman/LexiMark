@@ -22,7 +22,7 @@ from trl import SFTTrainer, SFTConfig
 from huggingface_hub import login, HfApi, HfFolder
 
 
-def fine_tune_model(model_name, data_path, base_path, resume_from_checkpoint=None):
+def fine_tune_model(model_name, data_path, base_path, resume_from_checkpoint=None, num_epochs=1):
     """
     Fine-tunes a causal language model using QLoRA and Hugging Face's `transformers` and `trl` libraries.
     Applies 4-bit quantization, PEFT with LoRA, and trains on a CSV dataset.
@@ -95,7 +95,7 @@ def fine_tune_model(model_name, data_path, base_path, resume_from_checkpoint=Non
     model = prepare_model_for_kbit_training(model)
     model.config.pad_token_id = tokenizer.pad_token_id
     model.config.use_cache = False
-    num_epochs = 1
+    num_epochs = num_epochs
     current_time = datetime.now().strftime("%Y_%m_%d_%H_%M_%S")
     data_name = data_path.rstrip('/').split('/')[-1].split('.')[0]
     # new model name
@@ -329,7 +329,7 @@ def use_fine_tune_model(output_merged_dir):
     print("Generated Text:", output_text)
 
 
-def main(model_name, data_path, base_path):
+def main(model_name, data_path, base_path, num_epochs=1):
     """
     Main execution flow to fine-tune a model, merge and save it, and test generation.
 
@@ -337,6 +337,7 @@ def main(model_name, data_path, base_path):
         model_name (str): Name or path of the base model to fine-tune.
         data_path (str): Path to the training dataset (CSV).
         base_path (str): Base path to store checkpoints and outputs.
+        num_epochs (int): Number of epochs to train the model.
 
     Returns:
         str: Path to the merged and saved model directory.
@@ -345,7 +346,7 @@ def main(model_name, data_path, base_path):
     print("Model Name:", model_name)
     print("Data Path:", data_path)
 
-    new_model, tokenizer = fine_tune_model(model_name, data_path, base_path)
+    new_model, tokenizer = fine_tune_model(model_name, data_path, base_path, num_epochs=num_epochs)
 
     # new_model, tokenizer = resume_training(model_name, data_path, data_name, checkpoint_dir)
     output_merged_dir = merge_and_upload_model(model_name, new_model, tokenizer)
